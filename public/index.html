@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VIVU Printer</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 0; background: #f7f7f8; color: #222; }
+    header { background: #1f6feb; color: #fff; padding: 12px 16px; }
+    main { padding: 16px; display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+    section { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; }
+    h2 { margin: 0 0 8px; font-size: 18px; }
+    label { display: block; font-size: 13px; color: #444; margin: 8px 0 4px; }
+    textarea, input, select { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-family: ui-monospace, monospace; }
+    button { padding: 8px 12px; background: #1f6feb; color: white; border: none; border-radius: 6px; cursor: pointer; }
+    button:disabled { background: #9ca3af; cursor: not-allowed; }
+    .row { display: flex; gap: 8px; }
+    .status { margin-top: 8px; font-size: 13px; }
+    .mono { font-family: ui-monospace, monospace; font-size: 12px; }
+    footer { padding: 12px 16px; text-align: center; color: #666; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>VIVU Printer</strong>
+    <span id="config" style="margin-left:8px; font-size: 12px;"></span>
+    <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+      <label for="printerSelect" style="margin:0; font-size:12px;">Chọn máy in</label>
+      <select id="printerSelect" style="width:auto; min-width:200px;"></select>
+      <button id="btnRefreshPrinters" style="background:#10b981;">Làm mới</button>
+      <span id="printerStatus" class="mono" style="font-size:12px;"></span>
+    </div>
+  </header>
+  <main>
+    <section>
+      <h2>In TSPL (text/plain)</h2>
+      <label>TSPL</label>
+      <textarea id="tspl" rows="12">SIZE 58 mm, 40 mm
+GAP 2 mm,0
+CLS
+TEXT 10,10,0,0,1,1,"Hello TSPL"
+PRINT 1</textarea>
+      <div class="row" style="margin-top:8px;">
+        <button id="btnPrintTspl">Gửi /print</button>
+        <button id="btnClearTspl" type="button">Xóa</button>
+        <button id="btnDebugTspl" type="button" style="background:#ef4444;">Thử trực tiếp</button>
+      </div>
+      <div class="status mono" id="statusTspl"></div>
+    </section>
+
+    <section>
+      <h2>In PDF</h2>
+      <label>Chọn file PDF</label>
+      <input id="pdfFile" type="file" accept="application/pdf" />
+      <div class="row" style="margin-top:8px;">
+        <button id="btnPrintPdf">Gửi /print-pdf</button>
+      </div>
+      <div class="status mono" id="statusPdf"></div>
+    </section>
+
+    <section>
+      <h2>In nhãn GHTK</h2>
+      <label>TRACKING_ORDER (mỗi dòng 1 mã hoặc phân tách bằng dấu ,)</label>
+      <textarea id="ghtkList" rows="6" placeholder="SODE1,SODE2"></textarea>
+      <div class="row" style="margin-top:8px;">
+        <button id="btnPrintGhtk">Gửi /print-ghtk-label</button>
+      </div>
+      <div class="status mono" id="statusGhtk"></div>
+    </section>
+
+    <section>
+      <h2>In đơn ViettelPost</h2>
+      <label>Danh sách URL (mỗi dòng 1 link)</label>
+      <textarea id="vtpList" rows="6" placeholder="https://viettelpost.com.vn/...&#10;https://viettelpost.com.vn/..."></textarea>
+      <div class="row" style="margin-top:8px;">
+        <button id="btnPrintVtp">Gửi /print-viettelpost</button>
+      </div>
+      <div class="status mono" id="statusVtp"></div>
+    </section>
+
+    <section>
+      <h2>In Hóa đơn (JSON → TSPL)</h2>
+      <label>Kích thước giấy</label>
+      <select id="sizeSelect">
+        <option value="58">58 mm</option>
+        <option value="80">80 mm</option>
+      </select>
+      <label>Tiêu đề</label>
+      <input id="titleInput" placeholder="Tiêu đề" value="VIVU" />
+      <label>QR (tuỳ chọn)</label>
+      <input id="qrInput" placeholder="Nội dung QR" />
+      <label>Danh sách sản phẩm (JSON)</label>
+      <textarea id="itemsJson" rows="10">[
+  { "name": "Cà phê", "qty": 2, "price": 25000 },
+  { "name": "Bánh", "qty": 1, "price": 15000 }
+]</textarea>
+      <label>Tổng tiền (tuỳ chọn, nếu bỏ trống sẽ tự tính)</label>
+      <input id="totalInput" type="number" placeholder="65000" />
+      <div class="row" style="margin-top:8px;">
+        <button id="btnPrintJson">Gửi /print-json</button>
+        <button id="btnClearJson" type="button">Xóa</button>
+      </div>
+      <div class="status mono" id="statusJson"></div>
+    </section>
+  </main>
+  <footer>
+    <span class="mono">Sử dụng API /print và /print-json</span>
+  </footer>
+  <script src="./app.js"></script>
+</body>
+</html>

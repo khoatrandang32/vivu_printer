@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Environment variables (chứa token, mật khẩu)
+.env
+.env.local
+.env.*.local
+
+# Build output
+dist/
+dist.rar
+*.exe
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.suo
+*.user
+
+# Temp files
+tmp/
+temp/
+*.tmp
