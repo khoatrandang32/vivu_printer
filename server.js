@@ -223,7 +223,14 @@ async function handleGatewayCommand(payload) {
   socketLastMessageAt = Date.now();
   if (!payload || typeof payload !== 'object') return;
   const messageType = String(payload.type || payload.event || payload.action || '').trim().toLowerCase();
+
+  // Log raw payload ngay khi nhận
+  const ts = new Date().toISOString();
+  console.log(`[SOCKET][${ts}] Xử lý lệnh type="${messageType || '(không có type)'}"`);
+  console.log(`[SOCKET] Payload: ${JSON.stringify(payload).slice(0, 500)}`);
+
   if (messageType === 'ping' || messageType === 'heartbeat') {
+    console.log('[SOCKET] → Phản hồi pong');
     emitSocketEvent('gateway_status', { type: 'pong', deviceId: getSocketDeviceId(), ts: Date.now() });
     return;
   }
@@ -238,7 +245,9 @@ async function handleGatewayCommand(payload) {
     else if (typeof payload.link === 'string') urls = [payload.link];
 
     const requestId = String(payload.requestId || payload.request_id || payload.id || crypto.randomUUID());
-    console.log(`[SOCKET][VTP] Nhận ${urls.length} URL ViettelPost từ backend, requestId=${requestId}`);
+    console.log(`[SOCKET][VTP] ▶ Bắt đầu in ${urls.length} URL ViettelPost | requestId=${requestId}`);
+    urls.forEach((u, i) => console.log(`[SOCKET][VTP]   [${i + 1}/${urls.length}] ${u}`));
+
     emitSocketEvent('gateway_command_ack', {
       type: 'vtp_print_ack',
       requestId,
@@ -249,6 +258,13 @@ async function handleGatewayCommand(payload) {
     });
     try {
       const results = await printViettelPostUrls(urls, `ws:${requestId}`);
+      const ok = results.filter(r => r.status === 'success').length;
+      const fail = results.filter(r => r.status === 'error').length;
+      console.log(`[SOCKET][VTP] ✔ Hoàn thành requestId=${requestId} | Thành công: ${ok}, Lỗi: ${fail}`);
+      results.forEach(r => {
+        if (r.status === 'success') console.log(`[SOCKET][VTP]   ✔ ${r.url}`);
+        else console.error(`[SOCKET][VTP]   ✘ ${r.url} → ${r.message}`);
+      });
       emitSocketEvent('gateway_command_result', {
         type: 'vtp_print_result',
         requestId,
@@ -260,7 +276,7 @@ async function handleGatewayCommand(payload) {
       });
     } catch (err) {
       const message = String(err.message || err);
-      console.error(`[SOCKET][VTP] Lỗi in requestId=${requestId}: ${message}`);
+      console.error(`[SOCKET][VTP] ✘ Lỗi requestId=${requestId}: ${message}`);
       emitSocketEvent('gateway_command_result', {
         type: 'vtp_print_result',
         requestId,
@@ -278,7 +294,7 @@ async function handleGatewayCommand(payload) {
   if (isReturnSlip) {
     const slip = payload.slip && typeof payload.slip === 'object' ? payload.slip : payload;
     const requestId = String(payload.requestId || payload.request_id || payload.id || crypto.randomUUID());
-    console.log(`[SOCKET][RTX] Nhận lệnh in phiếu trả xưởng, requestId=${requestId}`);
+    console.log(`[SOCKET][RTX] ▶ Bắt đầu in phiếu trả xưởng | requestId=${requestId}`);
     emitSocketEvent('gateway_command_ack', {
       type: 'rtx_slip_print_ack',
       requestId,
@@ -303,9 +319,10 @@ async function handleGatewayCommand(payload) {
         result,
         ts: Date.now(),
       });
+      console.log(`[SOCKET][RTX] ✔ In phiếu trả xưởng thành công | requestId=${requestId}`);
     } catch (err) {
       const message = String(err.message || err);
-      console.error(`[SOCKET][RTX] Lỗi in requestId=${requestId}: ${message}`);
+      console.error(`[SOCKET][RTX] ✘ Lỗi in requestId=${requestId}: ${message}`);
       emitSocketEvent('gateway_command_result', {
         type: 'rtx_slip_print_result',
         requestId,
@@ -322,13 +339,14 @@ async function handleGatewayCommand(payload) {
   const trackingOrders = normalizeTrackingOrders(payload);
   const canPrint = trackingOrders.length > 0 && (!messageType || ['print_ghtk_label', 'ghtk_print', 'print_label', 'print'].includes(messageType));
   if (!canPrint) {
-    console.log(`[SOCKET] Bỏ qua gateway_command không hỗ trợ: ${JSON.stringify(payload).slice(0, 300)}`);
+    console.log(`[SOCKET] ✘ Bỏ qua gateway_command không hỗ trợ (type="${messageType}"): ${JSON.stringify(payload).slice(0, 300)}`);
     return;
   }
   const requestId = payload && typeof payload === 'object'
     ? String(payload.requestId || payload.request_id || payload.id || crypto.randomUUID())
     : crypto.randomUUID();
-  console.log(`[SOCKET] Nhận ${trackingOrders.length} mã GHTK từ backend, requestId=${requestId}`);
+  console.log(`[SOCKET][GHTK] ▶ Bắt đầu in ${trackingOrders.length} mã GHTK | requestId=${requestId}`);
+  trackingOrders.forEach((code, i) => console.log(`[SOCKET][GHTK]   [${i + 1}/${trackingOrders.length}] ${code}`));
   emitSocketEvent('gateway_command_ack', {
     type: 'print_ack',
     requestId,
@@ -339,6 +357,13 @@ async function handleGatewayCommand(payload) {
   });
   try {
     const results = await printGhtkLabels(trackingOrders, `ws:${requestId}`);
+    const ok = results.filter(r => r.status === 'success').length;
+    const fail = results.filter(r => r.status === 'error').length;
+    console.log(`[SOCKET][GHTK] ✔ Hoàn thành requestId=${requestId} | Thành công: ${ok}, Lỗi: ${fail}`);
+    results.forEach(r => {
+      if (r.status === 'success') console.log(`[SOCKET][GHTK]   ✔ ${r.tracking}`);
+      else console.error(`[SOCKET][GHTK]   ✘ ${r.tracking} → ${r.message}`);
+    });
     emitSocketEvent('gateway_command_result', {
       type: 'print_result',
       requestId,
@@ -350,7 +375,7 @@ async function handleGatewayCommand(payload) {
     });
   } catch (err) {
     const message = String(err.message || err);
-    console.error(`[SOCKET] Lỗi in requestId=${requestId}: ${message}`);
+    console.error(`[SOCKET][GHTK] ✘ Lỗi requestId=${requestId}: ${message}`);
     emitSocketEvent('gateway_command_result', {
       type: 'print_result',
       requestId,
@@ -398,6 +423,8 @@ function connectSocketIo() {
     console.error('[SOCKET] Lỗi kết nối:', socketLastError);
   });
   socketClient.on('gateway_command', (payload) => {
+    const preview = JSON.stringify(payload).slice(0, 300);
+    console.log(`[SOCKET] ← Nhận event "gateway_command": ${preview}`);
     handleGatewayCommand(payload).catch((err) => {
       socketLastError = String(err.message || err);
       console.error('[SOCKET] Lỗi xử lý gateway_command:', socketLastError);
@@ -405,6 +432,8 @@ function connectSocketIo() {
   });
   // Lắng nghe event riêng cho ViettelPost
   socketClient.on('viettelpost_print', (payload) => {
+    const preview = JSON.stringify(payload).slice(0, 300);
+    console.log(`[SOCKET][VTP] ← Nhận event "viettelpost_print": ${preview}`);
     handleGatewayCommand({ ...payload, type: 'viettelpost_print' }).catch((err) => {
       socketLastError = String(err.message || err);
       console.error('[SOCKET][VTP] Lỗi xử lý viettelpost_print:', socketLastError);
@@ -412,6 +441,7 @@ function connectSocketIo() {
   });
   socketClient.on('ping', () => {
     socketLastMessageAt = Date.now();
+    console.log('[SOCKET] ← Nhận ping từ server');
   });
 }
 
@@ -665,24 +695,41 @@ async function sendToPrinterRaw(tspl, printerName) {
 
 async function sendToPrinterPdf(filePath, printerName, options) {
   const keepFile = !!(options && options.keepFile);
+  const paperSize = (options && options.paperSize) || null; // 'a5', 'a4', hoặc null = dùng LABEL size
   const name = sanitizePrinterName(printerName);
-  const quotedFile = `"${filePath}"`;
+
+  // Normalize path: dùng backslash chuẩn, không có ký tự đặc biệt
+  const normalizedPath = path.resolve(filePath);
+  const quotedFile = `"${normalizedPath}"`;
   const quotedPrinter = `"${name}"`;
+
   if (PDF_VIEWER_PATH && fs.existsSync(PDF_VIEWER_PATH)) {
     const viewer = `"${PDF_VIEWER_PATH}"`;
     try {
       if (/sumatra/i.test(PDF_VIEWER_PATH)) {
-        const settings = buildSumatraPrintSettings();
+        let settings;
+        if (paperSize === 'a5') {
+          const orient = 'portrait';
+          settings = `paper=148x210mm, ${orient}, fit`;
+        } else if (paperSize === 'a4') {
+          settings = `paper=210x297mm, portrait, fit`;
+        } else {
+          settings = buildSumatraPrintSettings();
+        }
+        // -exit-when-done đảm bảo SumatraPDF thoát sau khi in xong (blocking)
         const cmd = `${viewer} -print-to ${quotedPrinter} -print-settings "${settings}" -silent -exit-when-done ${quotedFile}`;
+        console.log(`[PDF] SumatraPDF cmd: ${cmd}`);
         const out = await tryExec(cmd);
-        if (!keepFile) scheduleTempDelete(filePath, 10000);
-        return { method: 'SumatraPDF', target: name, file: filePath, command: cmd, stdout: out.stdout, stderr: out.stderr };
+        console.log(`[PDF] SumatraPDF stdout: ${out.stdout || '(trống)'} | stderr: ${out.stderr || '(trống)'}`);
+        // File đã được in xong (SumatraPDF đã exit), xóa sau 5 giây là đủ
+        if (!keepFile) scheduleTempDelete(normalizedPath, 5000);
+        return { method: 'SumatraPDF', target: name, file: normalizedPath, command: cmd, stdout: out.stdout, stderr: out.stderr };
       }
       if (/acrord32|acrobat/i.test(PDF_VIEWER_PATH)) {
         const cmd = `${viewer} /t ${quotedFile} ${quotedPrinter} "" ""`;
         const out = await tryExec(cmd);
-        if (!keepFile) scheduleTempDelete(filePath, 60000);
-        return { method: 'Acrobat', target: name, file: filePath, command: cmd, stdout: out.stdout, stderr: out.stderr };
+        if (!keepFile) scheduleTempDelete(normalizedPath, 60000);
+        return { method: 'Acrobat', target: name, file: normalizedPath, command: cmd, stdout: out.stdout, stderr: out.stderr };
       }
     } catch (e) {
       throw new Error(`Không thể in PDF qua viewer tùy chỉnh (${PDF_VIEWER_PATH}). ${e.message}`);
@@ -691,14 +738,14 @@ async function sendToPrinterPdf(filePath, printerName, options) {
   try {
     const cmdPrintTo = `powershell -NoProfile -Command "Start-Process -FilePath ${quotedFile} -Verb PrintTo -ArgumentList ${quotedPrinter}"`;
     const out1 = await tryExec(cmdPrintTo);
-    if (!keepFile) scheduleTempDelete(filePath, 60000);
-    return { method: 'PrintTo', target: name, file: filePath, command: cmdPrintTo, stdout: out1.stdout, stderr: out1.stderr };
+    if (!keepFile) scheduleTempDelete(normalizedPath, 60000);
+    return { method: 'PrintTo', target: name, file: normalizedPath, command: cmdPrintTo, stdout: out1.stdout, stderr: out1.stderr };
   } catch (e1) {
     try {
       const cmdPrint = `powershell -NoProfile -Command "Start-Process -FilePath ${quotedFile} -Verb Print"`;
       const out2 = await tryExec(cmdPrint);
-      if (!keepFile) scheduleTempDelete(filePath, 60000);
-      return { method: 'Print', target: '(default printer)', file: filePath, command: cmdPrint, stdout: out2.stdout, stderr: out2.stderr };
+      if (!keepFile) scheduleTempDelete(normalizedPath, 60000);
+      return { method: 'Print', target: '(default printer)', file: normalizedPath, command: cmdPrint, stdout: out2.stdout, stderr: out2.stderr };
     } catch (e2) {
       throw new Error(
         `Không thể in PDF qua ứng dụng mặc định. Lỗi: ${e2.message}. ` +
@@ -959,9 +1006,17 @@ function renderUrlToPdf(url) {
       ));
     }
 
-    const pdfPath = path.join(os.tmpdir(), `vtp_${Date.now()}_${Math.floor(Math.random() * 1e6)}.pdf`);
-    // A5 = 148x210mm, portrait
-    // --print-to-pdf không cần --headless=new trên Edge cũ, nhưng dùng --headless để an toàn
+    // Tạo thư mục temp riêng để tránh Chrome/Edge ghi nhầm tên file
+    const tmpDir = path.join(os.tmpdir(), `vtp_${Date.now()}_${Math.floor(Math.random() * 1e6)}`);
+    const pdfPath = path.join(tmpDir, 'output.pdf');
+
+    try {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    } catch (e) {
+      return reject(new Error(`Không tạo được thư mục temp: ${e.message}`));
+    }
+
+    // A5 portrait: 148x210mm → inches: 5.827 x 8.268
     const args = [
       '--headless=new',
       '--disable-gpu',
@@ -974,33 +1029,79 @@ function renderUrlToPdf(url) {
       `--print-to-pdf=${pdfPath}`,
       '--print-to-pdf-no-header',
       '--no-pdf-header-footer',
-      // A5 portrait: width=148mm, height=210mm (in points: 1mm = 2.8346pt)
-      '--paper-width=5.83',   // 148mm in inches (148/25.4)
-      '--paper-height=8.27',  // 210mm in inches (210/25.4)
-      '--margin-top=0',
-      '--margin-bottom=0',
-      '--margin-left=0',
-      '--margin-right=0',
+      '--paper-width=5.827',
+      '--paper-height=8.268',
+      '--margin-top=0.4',
+      '--margin-bottom=0.4',
+      '--margin-left=0.4',
+      '--margin-right=0.4',
       url
     ];
 
-    const quotedBrowser = `"${browserPath}"`;
-    const quotedArgs = args.map(a => {
-      // args có dấu cách hoặc ký tự đặc biệt cần quote
-      if (a.startsWith('--') && !a.includes(' ')) return a;
-      return `"${a.replace(/"/g, '\\"')}"`;
-    }).join(' ');
-    const cmd = `${quotedBrowser} ${quotedArgs}`;
-
+    // Spawn thay vì exec để tránh shell quoting issues trên Windows
+    const { spawn } = require('child_process');
     console.log(`[VTP] Render URL: ${url}`);
-    exec(cmd, { windowsHide: true, timeout: 30000 }, (error, stdout, stderr) => {
-      if (error && !fs.existsSync(pdfPath)) {
-        return reject(new Error(`Lỗi render URL "${url}": ${error.message || stderr || stdout}`));
-      }
-      if (!fs.existsSync(pdfPath)) {
-        return reject(new Error(`Không tạo được PDF từ URL "${url}". Kiểm tra URL có hợp lệ không.`));
-      }
-      resolve(pdfPath);
+    console.log(`[VTP] Browser: ${browserPath}`);
+    console.log(`[VTP] Output PDF: ${pdfPath}`);
+
+    const child = spawn(browserPath, args, {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let stderr = '';
+    child.stderr && child.stderr.on('data', d => { stderr += d.toString(); });
+
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`Timeout render URL "${url}" sau 30 giây`));
+    }, 30000);
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      // Đợi 500ms để đảm bảo OS flush file xuống disk
+      setTimeout(() => {
+        // Chrome/Edge đôi khi ghi vào thư mục làm việc thay vì path chỉ định
+        // → tìm file PDF trong tmpDir
+        let foundPath = null;
+        if (fs.existsSync(pdfPath)) {
+          foundPath = pdfPath;
+        } else {
+          // Tìm bất kỳ file .pdf nào trong tmpDir
+          try {
+            const files = fs.readdirSync(tmpDir).filter(f => f.endsWith('.pdf'));
+            if (files.length > 0) foundPath = path.join(tmpDir, files[0]);
+          } catch {}
+        }
+
+        if (!foundPath) {
+          // Dọn thư mục temp
+          try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+          const errMsg = stderr.slice(0, 300) || `exit code ${code}`;
+          return reject(new Error(`Không tạo được PDF từ URL "${url}". ${errMsg}`));
+        }
+
+        // Kiểm tra file có nội dung không (> 100 bytes)
+        try {
+          const stat = fs.statSync(foundPath);
+          if (stat.size < 100) {
+            try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+            return reject(new Error(`PDF tạo ra bị rỗng (${stat.size} bytes) từ URL "${url}"`));
+          }
+        } catch (e) {
+          try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+          return reject(new Error(`Không đọc được file PDF: ${e.message}`));
+        }
+
+        console.log(`[VTP] PDF tạo thành công: ${foundPath} (${fs.statSync(foundPath).size} bytes)`);
+        resolve(foundPath);
+      }, 500);
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      reject(new Error(`Không thể khởi động browser: ${err.message}`));
     });
   });
 }
@@ -1018,7 +1119,11 @@ async function printViettelPostUrls(urls, source) {
     try {
       console.log(`[VTP] Bắt đầu in URL: ${url} từ ${source}`);
       const pdfPath = await renderUrlToPdf(url);
-      const printResult = await sendToPrinterPdf(pdfPath, CURRENT_PRINTER, { keepFile: false });
+      const printResult = await sendToPrinterPdf(pdfPath, CURRENT_PRINTER, { keepFile: true, paperSize: 'a5' });
+      // Xóa PDF sau 60 giây để SumatraPDF kịp đọc và in xong
+      setTimeout(() => {
+        try { fs.rmSync(path.dirname(pdfPath), { recursive: true, force: true }); } catch {}
+      }, 60000);
       results.push({ url, status: 'success', result: printResult });
       console.log(`[VTP] In thành công URL: ${url}`);
     } catch (e) {

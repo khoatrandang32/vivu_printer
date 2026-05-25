@@ -163,15 +163,24 @@ async function printReturnToWorkshopSlip(slip, deps) {
   let pdfPath;
   try {
     pdfPath = await renderDocumentToPdf(htmlPath);
-    const printResult = await sendToPrinterPdf(pdfPath, printerName, { keepFile: false });
+    // Xóa HTML sau khi Edge đã render xong PDF (không cần nữa)
+    fs.unlink(htmlPath, () => {});
+
+    const printResult = await sendToPrinterPdf(pdfPath, printerName, { keepFile: true, paperSize: 'a5' });
+
+    // Xóa PDF sau 60 giây để SumatraPDF kịp đọc và in xong
+    setTimeout(() => { fs.unlink(pdfPath, () => {}); }, 60000);
+
     return {
       status: 'success',
       code: slip.code || '',
       result: printResult,
     };
-  } finally {
+  } catch (err) {
+    // Dọn dẹp khi lỗi
     fs.unlink(htmlPath, () => {});
-    if (pdfPath) fs.unlink(pdfPath, () => {});
+    if (pdfPath) setTimeout(() => { fs.unlink(pdfPath, () => {}); }, 5000);
+    throw err;
   }
 }
 

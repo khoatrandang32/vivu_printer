@@ -1,7 +1,7 @@
 {
   "name": "vivu-printer",
   "version": "1.0.0",
-    "bin": "server.js",
+  "bin": "server.js",
   "description": "NodeJS Print Server cho máy in nhiệt HPRT N43 (TSPL) trên Windows",
   "main": "server.js",
   "private": true,
