@@ -11,6 +11,7 @@ const { exec } = require('child_process');
 const crypto = require('crypto');
 const dgram = require('dgram');
 const { io } = require('socket.io-client');
+const { printReturnToWorkshopSlip } = require('./returnSlipPrint');
 
 // Cấu hình
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -213,7 +214,7 @@ function buildSocketHelloPayload() {
     ip: getLocalIPv4(),
     port: PORT,
     printerName: CURRENT_PRINTER,
-    capabilities: ['print_ghtk_label', 'print_viettelpost'],
+    capabilities: ['print_ghtk_label', 'print_viettelpost', 'print_return_to_workshop_slip'],
     ts: Date.now()
   };
 }
@@ -267,6 +268,51 @@ async function handleGatewayCommand(payload) {
         status: 'error',
         message,
         ts: Date.now()
+      });
+    }
+    return;
+  }
+
+  // ── Phiếu trả lại xưởng (HTML → PDF → in) ──
+  const isReturnSlip = ['print_return_to_workshop_slip', 'return_to_workshop_slip', 'print_return_slip'].includes(messageType);
+  if (isReturnSlip) {
+    const slip = payload.slip && typeof payload.slip === 'object' ? payload.slip : payload;
+    const requestId = String(payload.requestId || payload.request_id || payload.id || crypto.randomUUID());
+    console.log(`[SOCKET][RTX] Nhận lệnh in phiếu trả xưởng, requestId=${requestId}`);
+    emitSocketEvent('gateway_command_ack', {
+      type: 'rtx_slip_print_ack',
+      requestId,
+      deviceId: getSocketDeviceId(),
+      status: 'received',
+      ts: Date.now(),
+    });
+    try {
+      const result = await printReturnToWorkshopSlip(slip, {
+        renderDocumentToPdf: (docPath) => {
+          const fileUrl = 'file:///' + String(docPath).replace(/\\/g, '/');
+          return renderUrlToPdf(fileUrl);
+        },
+        sendToPrinterPdf,
+        printerName: CURRENT_PRINTER,
+      });
+      emitSocketEvent('gateway_command_result', {
+        type: 'rtx_slip_print_result',
+        requestId,
+        deviceId: getSocketDeviceId(),
+        status: 'success',
+        result,
+        ts: Date.now(),
+      });
+    } catch (err) {
+      const message = String(err.message || err);
+      console.error(`[SOCKET][RTX] Lỗi in requestId=${requestId}: ${message}`);
+      emitSocketEvent('gateway_command_result', {
+        type: 'rtx_slip_print_result',
+        requestId,
+        deviceId: getSocketDeviceId(),
+        status: 'error',
+        message,
+        ts: Date.now(),
       });
     }
     return;
@@ -1012,6 +1058,25 @@ app.post('/print-ghtk-label', express.json({ limit: '1mb' }), async (req, res) =
     return res.json({ status: 'success', count: results.length, results });
   } catch (err) {
     return res.status(400).json({ status: 'error', message: err.message });
+  }
+});
+
+app.post('/print-return-to-workshop-slip', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const slip = body.slip && typeof body.slip === 'object' ? body.slip : body;
+    const result = await printReturnToWorkshopSlip(slip, {
+      renderDocumentToPdf: (docPath) => {
+        const fileUrl = 'file:///' + String(docPath).replace(/\\/g, '/');
+        return renderUrlToPdf(fileUrl);
+      },
+      sendToPrinterPdf,
+      printerName: CURRENT_PRINTER,
+    });
+    return res.json({ status: 'success', result });
+  } catch (err) {
+    console.error('[API /print-return-to-workshop-slip] Error:', err);
+    return res.status(500).json({ status: 'error', message: err.message });
   }
 });
 

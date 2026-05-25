@@ -12,6 +12,7 @@
   "dependencies": {
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "qrcode": "^1.5.4",
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
@@ -21,7 +22,8 @@
   "license": "MIT",
   "pkg": {
     "assets": [
-      "public/**/*"
+      "public/**/*",
+      "returnSlipPrint.js"
     ]
   }
 }
