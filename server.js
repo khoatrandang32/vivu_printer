@@ -1298,17 +1298,6 @@ app.get('/config', (req, res) => {
   res.json({ port: PORT, printerName: CURRENT_PRINTER, socket, websocket: socket });
 });
 
-// Mở trình duyệt tự động (chỉ khi chạy từ file .exe)
-function openBrowserUI(port) {
-  const url = `http://localhost:${port}/`;
-  // pkg đóng gói exe sẽ có process.pkg, node thường thì không
-  const isExe = typeof process.pkg !== 'undefined';
-  if (!isExe) return;
-  const cmd = `start "" "${url}"`;
-  exec(cmd, { windowsHide: true }, () => {});
-  console.log(`[UI] Mở trình duyệt: ${url}`);
-}
-
 // Khởi động server
 app.listen(PORT, () => {
   console.log(`Print Server chạy tại http://localhost:${PORT}/`);
@@ -1327,7 +1316,6 @@ app.listen(PORT, () => {
     .catch(() => {});
   startUdpBroadcast();
   startSocketClient();
-  openBrowserUI(PORT);
 });
 
 function getExeCommandForStartup() {

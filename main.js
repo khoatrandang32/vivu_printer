@@ -1,0 +1,208 @@
+'use strict';
+
+const { app, BrowserWindow, Tray, Menu, nativeImage, shell, dialog } = require('electron');
+const path = require('path');
+const { fork } = require('child_process');
+const http = require('http');
+
+// Đọc PORT từ .env thủ công (dotenv chưa load ở main process)
+function readEnvPort() {
+  try {
+    const fs = require('fs');
+    const envPath = path.join(process.cwd(), '.env');
+    if (!fs.existsSync(envPath)) return 3000;
+    const content = fs.readFileSync(envPath, 'utf8');
+    const match = content.match(/^PORT\s*=\s*(\d+)/m);
+    return match ? parseInt(match[1], 10) : 3000;
+  } catch {
+    return 3000;
+  }
+}
+
+const PORT = readEnvPort();
+const APP_URL = `http://localhost:${PORT}`;
+
+let mainWindow = null;
+let tray = null;
+let serverProcess = null;
+let serverReady = false;
+
+// ── Khởi động Express server trong process con ──────────────────────────────
+function startServer() {
+  const serverPath = path.join(__dirname, 'server.js');
+  serverProcess = fork(serverPath, [], {
+    cwd: process.cwd(),
+    env: { ...process.env },
+    silent: false,
+  });
+
+  serverProcess.on('error', (err) => {
+    console.error('[ELECTRON] Server process lỗi:', err.message);
+  });
+
+  serverProcess.on('exit', (code) => {
+    console.log(`[ELECTRON] Server process thoát với code ${code}`);
+    serverReady = false;
+  });
+}
+
+// Chờ server sẵn sàng bằng cách poll HTTP
+function waitForServer(retries = 30, delayMs = 500) {
+  return new Promise((resolve, reject) => {
+    let attempts = 0;
+    const check = () => {
+      http.get(`${APP_URL}/config`, (res) => {
+        if (res.statusCode === 200) {
+          serverReady = true;
+          resolve();
+        } else {
+          retry();
+        }
+        res.resume();
+      }).on('error', retry);
+    };
+    const retry = () => {
+      attempts++;
+      if (attempts >= retries) return reject(new Error('Server không khởi động được'));
+      setTimeout(check, delayMs);
+    };
+    check();
+  });
+}
+
+// ── Tạo cửa sổ chính ────────────────────────────────────────────────────────
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1100,
+    height: 750,
+    minWidth: 800,
+    minHeight: 550,
+    title: 'VIVU Printer',
+    icon: path.join(__dirname, 'public', 'icon.png'),
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+    show: false, // ẩn cho đến khi load xong
+    backgroundColor: '#f7f7f8',
+  });
+
+  mainWindow.loadURL(APP_URL);
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+  });
+
+  // Mở link ngoài bằng trình duyệt hệ thống
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
+  // Ẩn xuống tray thay vì đóng
+  mainWindow.on('close', (e) => {
+    if (!app.isQuiting) {
+      e.preventDefault();
+      mainWindow.hide();
+    }
+  });
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+}
+
+// ── Tray icon ────────────────────────────────────────────────────────────────
+function createTray() {
+  // Dùng icon mặc định nếu không có file icon
+  let icon;
+  try {
+    const iconPath = path.join(__dirname, 'public', 'icon.png');
+    const fs = require('fs');
+    if (fs.existsSync(iconPath)) {
+      icon = nativeImage.createFromPath(iconPath);
+    } else {
+      icon = nativeImage.createEmpty();
+    }
+  } catch {
+    icon = nativeImage.createEmpty();
+  }
+
+  tray = new Tray(icon);
+  tray.setToolTip(`VIVU Printer — http://localhost:${PORT}`);
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Mở VIVU Printer',
+      click: () => {
+        if (mainWindow) {
+          mainWindow.show();
+          mainWindow.focus();
+        } else {
+          createWindow();
+        }
+      },
+    },
+    {
+      label: `Mở trong trình duyệt (localhost:${PORT})`,
+      click: () => shell.openExternal(APP_URL),
+    },
+    { type: 'separator' },
+    {
+      label: 'Thoát',
+      click: () => {
+        app.isQuiting = true;
+        app.quit();
+      },
+    },
+  ]);
+
+  tray.setContextMenu(contextMenu);
+
+  tray.on('double-click', () => {
+    if (mainWindow) {
+      mainWindow.show();
+      mainWindow.focus();
+    } else {
+      createWindow();
+    }
+  });
+}
+
+// ── App lifecycle ────────────────────────────────────────────────────────────
+app.whenReady().then(async () => {
+  // Khởi động server trước
+  startServer();
+
+  // Tạo tray ngay
+  createTray();
+
+  // Chờ server sẵn sàng rồi mở cửa sổ
+  try {
+    await waitForServer(40, 500);
+    createWindow();
+  } catch (err) {
+    dialog.showErrorBox(
+      'VIVU Printer — Lỗi khởi động',
+      `Không thể khởi động print server tại cổng ${PORT}.\n\n${err.message}\n\nKiểm tra file .env và đảm bảo cổng ${PORT} chưa bị chiếm.`
+    );
+    app.quit();
+  }
+});
+
+app.on('window-all-closed', () => {
+  // Không thoát khi đóng cửa sổ — vẫn chạy ở tray
+  // Chỉ thoát khi user chọn "Thoát" từ tray
+});
+
+app.on('activate', () => {
+  if (mainWindow === null) createWindow();
+});
+
+app.on('before-quit', () => {
+  app.isQuiting = true;
+  if (serverProcess) {
+    serverProcess.kill();
+    serverProcess = null;
+  }
+});

@@ -1,13 +1,15 @@
 {
   "name": "vivu-printer",
   "version": "1.0.0",
-  "bin": "server.js",
   "description": "NodeJS Print Server cho máy in nhiệt HPRT N43 (TSPL) trên Windows",
-  "main": "server.js",
+  "main": "main.js",
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "build:exe": "pkg -t node18-win-x64 --output dist/vivu_printer.exe server.js"
+    "electron": "electron .",
+    "build:exe": "pkg -t node18-win-x64 --output dist/vivu_printer_server.exe server.js",
+    "build:electron": "electron-packager . \"VIVU Printer\" --platform=win32 --arch=x64 --out=dist-electron --overwrite --icon=public/icon.ico --ignore=dist --ignore=dist-electron --ignore=.git --ignore=dist.rar",
+    "build:all": "npm run build:exe && npm run build:electron"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
@@ -16,6 +18,9 @@
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
+    "@electron/packager": "^20.0.0",
+    "electron": "^42.3.0",
+    "electron-builder": "^26.8.1",
     "pkg": "^5.8.1"
   },
   "author": "",
@@ -25,5 +30,57 @@
       "public/**/*",
       "returnSlipPrint.js"
     ]
+  },
+  "build": {
+    "appId": "com.vivu.printer",
+    "productName": "VIVU Printer",
+    "copyright": "Copyright © 2026 VIVU",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "main.js",
+      "server.js",
+      "returnSlipPrint.js",
+      "public/**/*",
+      "node_modules/**/*",
+      "!node_modules/electron/**/*",
+      "!node_modules/electron-builder/**/*",
+      "!node_modules/pkg/**/*"
+    ],
+    "extraFiles": [
+      {
+        "from": ".env",
+        "to": ".env"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "public/icon.png",
+      "signtoolOptions": null
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "VIVU Printer"
+    },
+    "portable": {
+      "artifactName": "vivu-printer-portable.exe"
+    }
   }
 }
