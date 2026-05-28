@@ -31,7 +31,7 @@ async function buildQrDataUrl(data) {
   }
 }
 
-async function buildReturnToWorkshopSlipHtml(slip) {
+async function buildReturnToWorkshopSlipHtml(slip, opts = {}) {
   const workshopName = escapeHtml(slip.workshopName || '—');
   const workshopCode = escapeHtml(slip.workshopCode || '');
   const returnDate = escapeHtml(slip.returnDate || '—');
@@ -39,6 +39,13 @@ async function buildReturnToWorkshopSlipHtml(slip) {
   const reason = escapeHtml(slip.reason || '—');
   const code = escapeHtml(slip.code || '');
   const qrDataUrl = await buildQrDataUrl(slip.qrData);
+
+  // Allow preview overrides for font/qr sizes (used by settings preview)
+  const sizeTitle = Number(opts.sizeTitle ?? 28);
+  const sizeSubtitle = Number(opts.sizeSubtitle ?? 15);
+  const sizeContent = Number(opts.sizeContent ?? 22);
+  const sizeReason = Number(opts.sizeReason ?? 19);
+  const sizeQr = Number(opts.sizeQr ?? 200);
 
   const workshopLine = workshopCode
     ? `${workshopName} <span class="muted">(${workshopCode})</span>`
@@ -64,13 +71,13 @@ async function buildReturnToWorkshopSlipHtml(slip) {
     }
     .sheet { padding: 6px 2px; }
     h1 {
-      font-size: 28px;
+      font-size: ${sizeTitle}px;
       font-weight: 900;
       margin: 0 0 4px;
       letter-spacing: 0.5px;
     }
     .subtitle {
-      font-size: 15px;
+      font-size: ${sizeSubtitle}px;
       font-weight: 500;
       color: #6b7280;
       margin-bottom: 18px;
@@ -89,13 +96,13 @@ async function buildReturnToWorkshopSlipHtml(slip) {
       margin-bottom: 5px;
     }
     .value {
-      font-size: 22px;
+      font-size: ${sizeContent}px;
       font-weight: 800;
       line-height: 1.3;
       word-break: break-word;
     }
     .value.reason {
-      font-size: 19px;
+      font-size: ${sizeReason}px;
       font-weight: 700;
     }
     .muted { color: #6b7280; font-weight: 600; }
@@ -105,8 +112,8 @@ async function buildReturnToWorkshopSlipHtml(slip) {
       padding-top: 8px;
     }
     .qr img {
-      width: 200px;
-      height: 200px;
+      width: ${sizeQr}px;
+      height: ${sizeQr}px;
       object-fit: contain;
     }
     .qr .code {

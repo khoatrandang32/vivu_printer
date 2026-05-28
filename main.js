@@ -21,11 +21,41 @@ function readEnvPort() {
 
 const PORT = readEnvPort();
 const APP_URL = `http://localhost:${PORT}`;
+const START_MINIMIZED = process.argv.includes('--hidden') || process.env.START_MINIMIZED === 'true';
 
 let mainWindow = null;
 let tray = null;
 let serverProcess = null;
 let serverReady = false;
+
+//
+// Windows: set AppUserModelId for proper shortcuts/notifications
+//
+if (process.platform === 'win32' && app && app.setAppUserModelId) {
+  try {
+    app.setAppUserModelId('com.vivu.printer');
+  } catch {}
+}
+
+//
+// Single-instance lock: prevent multiple copies running.
+// If a second instance is started, focus the existing window.
+//
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  // Another instance is already running — exit this one.
+  app.quit();
+} else {
+  app.on('second-instance', (event, argv, workingDirectory) => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    } else {
+      createWindow();
+    }
+  });
+}
 
 // ── Khởi động Express server trong process con ──────────────────────────────
 function startServer() {
@@ -90,7 +120,9 @@ function createWindow() {
   mainWindow.loadURL(APP_URL);
 
   mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
+    if (!START_MINIMIZED) {
+      mainWindow.show();
+    }
   });
 
   // Mở link ngoài bằng trình duyệt hệ thống
@@ -146,6 +178,21 @@ function createTray() {
     {
       label: `Mở trong trình duyệt (localhost:${PORT})`,
       click: () => shell.openExternal(APP_URL),
+    },
+    {
+      label: 'Khởi động cùng Windows',
+      type: 'checkbox',
+      checked: app.getLoginItemSettings ? app.getLoginItemSettings().openAtLogin : false,
+      click: (menuItem) => {
+        const openAtLogin = !!menuItem.checked;
+        if (app.setLoginItemSettings) {
+          app.setLoginItemSettings({
+            openAtLogin,
+            path: process.execPath,
+            args: openAtLogin ? ['--hidden'] : []
+          });
+        }
+      },
     },
     { type: 'separator' },
     {

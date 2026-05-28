@@ -11,7 +11,7 @@ const { exec } = require('child_process');
 const crypto = require('crypto');
 const dgram = require('dgram');
 const { io } = require('socket.io-client');
-const { printReturnToWorkshopSlip } = require('./returnSlipPrint');
+const { printReturnToWorkshopSlip, buildReturnToWorkshopSlipHtml } = require('./returnSlipPrint');
 
 // Cấu hình
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -53,6 +53,75 @@ app.use(express.text({ type: 'text/plain', limit: '1mb' }));
 app.use(express.json({ limit: '1mb' }));
 const PUBLIC_DIR = path.join(__dirname, 'public');
 app.use(express.static(PUBLIC_DIR));
+
+// ---------------- Settings endpoints (UI) ----------------
+// Read .env content
+app.get('/settings/env', (req, res) => {
+  const envPath = path.join(process.cwd(), '.env');
+  try {
+    if (!fs.existsSync(envPath)) return res.json({ content: '' });
+    const content = fs.readFileSync(envPath, 'utf8');
+    return res.json({ content });
+  } catch (err) {
+    return res.status(500).json({ error: String(err.message || err) });
+  }
+});
+
+// Write .env content (simple editor)
+app.post('/settings/env', express.json(), (req, res) => {
+  const content = String((req.body && req.body.content) || '');
+  const envPath = path.join(process.cwd(), '.env');
+  try {
+    fs.writeFileSync(envPath, content, 'utf8');
+    return res.json({ status: 'ok' });
+  } catch (err) {
+    return res.status(500).json({ error: String(err.message || err) });
+  }
+});
+
+ // Preview return-to-workshop slip HTML with preview options (font scaling + per-element sizes)
+app.post('/settings/preview-return-slip', express.json(), async (req, res) => {
+  try {
+    const slip = req.body && req.body.slip ? req.body.slip : {};
+    // Accept numeric preview parameters; fallback to defaults
+    const fontScale = Number(req.body && req.body.fontScale ? Number(req.body.fontScale) : 100);
+    const sizeTitle = Number(req.body && Number.isFinite(Number(req.body.sizeTitle)) ? Number(req.body.sizeTitle) : 28);
+    const sizeSubtitle = Number(req.body && Number.isFinite(Number(req.body.sizeSubtitle)) ? Number(req.body.sizeSubtitle) : 15);
+    const sizeContent = Number(req.body && Number.isFinite(Number(req.body.sizeContent)) ? Number(req.body.sizeContent) : 22);
+    const sizeReason = Number(req.body && Number.isFinite(Number(req.body.sizeReason)) ? Number(req.body.sizeReason) : 19);
+    const sizeQr = Number(req.body && Number.isFinite(Number(req.body.sizeQr)) ? Number(req.body.sizeQr) : 200);
+
+    // basic clamps to avoid crazy values
+    const clamp = (v, min, max) => Math.max(min, Math.min(max, Math.round(Number(v) || 0)));
+    const sFontScale = clamp(fontScale, 10, 400);
+    const sTitle = clamp(sizeTitle, 8, 200);
+    const sSubtitle = clamp(sizeSubtitle, 8, 200);
+    const sContent = clamp(sizeContent, 8, 200);
+    const sReason = clamp(sizeReason, 8, 200);
+    const sQr = clamp(sizeQr, 20, 1600);
+
+    // Pass explicit size options into the template generator so sizes are applied directly
+    const opts = {
+      sizeTitle: sTitle,
+      sizeSubtitle: sSubtitle,
+      sizeContent: sContent,
+      sizeReason: sReason,
+      sizeQr: sQr
+    };
+
+    let html = await buildReturnToWorkshopSlipHtml(slip, opts);
+
+    // Inject global zoom for preview if requested (keeps template sizes intact but scales whole preview)
+    if (sFontScale && sFontScale !== 100) {
+      const zoomStyle = `<style>body{zoom:${sFontScale}%}</style>`;
+      html = html.replace('</head>', `${zoomStyle}</head>`);
+    }
+
+    res.type('text/html').send(html);
+  } catch (err) {
+    res.status(500).json({ error: String(err.message || err) });
+  }
+});
 
 // Tiện ích chung
 function mmToDots(mm) {

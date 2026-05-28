@@ -28,6 +28,7 @@
       <label for="printerSelect" style="margin:0; font-size:12px;">Chọn máy in</label>
       <select id="printerSelect" style="width:auto; min-width:200px;"></select>
       <button id="btnRefreshPrinters" style="background:#10b981;">Làm mới</button>
+      <button id="btnSettings" style="background:#6b7280;">Cài đặt</button>
       <span id="printerStatus" class="mono" style="font-size:12px;"></span>
     </div>
   </header>
@@ -106,6 +107,98 @@ PRINT 1</textarea>
   <footer>
     <span class="mono">Sử dụng API /print và /print-json</span>
   </footer>
+
+  <!-- Settings modal -->
+  <div id="settingsModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.35); z-index:1200; align-items:center; justify-content:center;">
+    <div style="width:980px; max-width:98%; max-height:92%; overflow:auto; background:#fff; border-radius:8px; padding:16px; box-shadow:0 10px 30px rgba(2,6,23,0.2);">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;">
+        <h2 style="margin:0; font-size:18px;">Cài đặt</h2>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button id="btnCloseSettings" style="background:#ef4444;">Đóng</button>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr 480px; gap:12px;">
+        <div>
+          <h3 style="margin-top:0;">Biến môi trường (.env)</h3>
+
+          <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+            <button id="btnLoadEnv">Tải .env</button>
+            <button id="btnSaveEnv" style="background:#10b981;">Lưu .env</button>
+            <button id="btnAddEnvVar" type="button">+ Thêm biến môi trường mới</button>
+            <span id="envStatus" class="mono" style="margin-left:8px;"></span>
+          </div>
+
+          <div id="envList" style="display:flex; flex-direction:column; gap:8px;">
+            <!-- Rows inserted here -->
+          </div>
+
+          <!-- Template for env row (hidden) -->
+          <div id="envRowTemplate" style="display:none; gap:8px; align-items:center;">
+            <input class="envKey" placeholder="TÊN_BIẾN" style="width:40%; padding:6px; font-family:ui-monospace,monospace;" />
+            <input class="envValue" placeholder="giá trị" style="width:45%; padding:6px; font-family:ui-monospace,monospace;" />
+            <button class="envToggleValue" title="Hiện/ẩn giá trị" type="button">Hiện</button>
+            <button class="envRemove" title="Xóa" type="button" style="background:#ef4444;">Xóa</button>
+          </div>
+        </div>
+
+        <div>
+          <h3 style="margin-top:0;">Preview phiếu trả hàng</h3>
+          <label style="display:block; font-size:13px; color:#444; margin-bottom:6px;">Dữ liệu phiếu (JSON)</label>
+          <textarea id="slipJson" rows="6" style="width:100%; box-sizing:border-box; padding:8px; font-family:ui-monospace,monospace;">{
+  "workshopName": "Xưởng A",
+  "workshopCode": "XA-01",
+  "returnDate": "2026-05-28",
+  "totalValue": 125000,
+  "reason": "Sản phẩm lỗi",
+  "code": "RTX-123",
+  "qrData": "RTX-123"
+}</textarea>
+
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:8px;">
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước chữ - Tiêu đề (px)</label>
+              <input id="sizeTitle" type="number" min="8" max="200" value="28" style="width:100%; padding:6px;" />
+            </div>
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước chữ - Subtitle (px)</label>
+              <input id="sizeSubtitle" type="number" min="8" max="200" value="15" style="width:100%; padding:6px;" />
+            </div>
+
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước chữ - Nội dung (px)</label>
+              <input id="sizeContent" type="number" min="8" max="200" value="22" style="width:100%; padding:6px;" />
+            </div>
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước chữ - Lý do (px)</label>
+              <input id="sizeReason" type="number" min="8" max="200" value="19" style="width:100%; padding:6px;" />
+            </div>
+
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước QR (px)</label>
+              <input id="sizeQr" type="number" min="20" max="800" value="200" style="width:100%; padding:6px;" />
+            </div>
+            <div>
+              <label style="font-size:13px; color:#444;">Tỉ lệ toàn cục preview (%)</label>
+              <input id="fontScale" type="range" min="50" max="200" value="100" style="width:100%" />
+              <div style="font-size:12px; margin-top:4px;">Tỉ lệ: <span id="fontScaleLabel">100%</span></div>
+            </div>
+          </div>
+
+          <div style="display:flex; gap:8px; margin-top:10px;">
+            <button id="btnRenderPreview" style="background:#1f6feb;">Xem trước</button>
+            <button id="btnOpenPreviewWindow" type="button">Mở trong cửa sổ mới</button>
+            <span id="previewStatus" class="mono" style="margin-left:8px;"></span>
+          </div>
+
+          <div style="margin-top:10px; border:1px solid #e5e7eb; border-radius:6px; overflow:hidden; height:360px;">
+            <iframe id="previewIframe" style="width:100%; height:100%; border:0; background:#fff;"></iframe>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="./app.js"></script>
 </body>
 </html>

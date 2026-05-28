@@ -262,6 +262,227 @@ function bindEvents() {
   document.getElementById('btnPrintPdf').addEventListener('click', printPdf);
   document.getElementById('btnPrintGhtk').addEventListener('click', printGhtk);
   document.getElementById('btnPrintVtp').addEventListener('click', printVtp);
+
+  // Settings modal controls
+  const btnSettings = document.getElementById('btnSettings');
+  const btnCloseSettings = document.getElementById('btnCloseSettings');
+  const settingsModal = document.getElementById('settingsModal');
+  const btnLoadEnv = document.getElementById('btnLoadEnv');
+  const btnSaveEnv = document.getElementById('btnSaveEnv');
+  const btnAddEnvVar = document.getElementById('btnAddEnvVar');
+  const envList = document.getElementById('envList');
+  const envRowTemplate = document.getElementById('envRowTemplate');
+  const envStatus = document.getElementById('envStatus');
+  const btnRenderPreview = document.getElementById('btnRenderPreview');
+  const btnOpenPreviewWindow = document.getElementById('btnOpenPreviewWindow');
+  const slipJsonEl = document.getElementById('slipJson');
+  const previewIframe = document.getElementById('previewIframe');
+  const previewStatus = document.getElementById('previewStatus');
+  const fontScale = document.getElementById('fontScale');
+  const fontScaleLabel = document.getElementById('fontScaleLabel');
+
+  function showSettings() {
+    if (settingsModal) {
+      settingsModal.style.display = 'flex';
+      // load env content when opening
+      loadEnv().catch(() => {});
+    }
+  }
+  function hideSettings() {
+    if (settingsModal) settingsModal.style.display = 'none';
+  }
+
+  function createEnvRow(key = '', value = '', masked = true) {
+    const node = envRowTemplate.cloneNode(true);
+    node.style.display = 'flex';
+    node.removeAttribute('id');
+    const inputKey = node.querySelector('.envKey');
+    const inputVal = node.querySelector('.envValue');
+    const btnToggle = node.querySelector('.envToggleValue');
+    const btnRemove = node.querySelector('.envRemove');
+
+    inputKey.value = key || '';
+    inputVal.value = value || '';
+    inputVal.type = masked ? 'password' : 'text';
+    btnToggle.textContent = masked ? 'Hiện' : 'Ẩn';
+
+    btnToggle.addEventListener('click', () => {
+      const isMasked = inputVal.type === 'password';
+      inputVal.type = isMasked ? 'text' : 'password';
+      btnToggle.textContent = isMasked ? 'Ẩn' : 'Hiện';
+    });
+
+    btnRemove.addEventListener('click', () => {
+      node.remove();
+    });
+
+    return node;
+  }
+
+  function clearEnvList() {
+    if (envList) envList.innerHTML = '';
+  }
+
+  async function loadEnv() {
+    if (!envList || !envStatus) return;
+    envStatus.textContent = 'Đang tải...';
+    try {
+      const res = await fetch('/settings/env');
+      const data = await res.json();
+      const content = data.content || '';
+      clearEnvList();
+      const lines = content.split(/\r?\n/);
+      for (const ln of lines) {
+        if (!ln) continue;
+        const idx = ln.indexOf('=');
+        if (idx > -1) {
+          const k = ln.slice(0, idx);
+          const v = ln.slice(idx + 1);
+          envList.appendChild(createEnvRow(k, v, true));
+        } else {
+          envList.appendChild(createEnvRow(ln, '', true));
+        }
+      }
+      envStatus.textContent = 'Đã tải';
+      setTimeout(() => { envStatus.textContent = ''; }, 1500);
+    } catch (e) {
+      envStatus.textContent = 'Lỗi tải .env';
+      setTimeout(() => { envStatus.textContent = ''; }, 1500);
+    }
+  }
+
+  async function saveEnv() {
+    if (!envList || !envStatus) return;
+    envStatus.textContent = 'Đang lưu...';
+    try {
+      const rows = Array.from(envList.children);
+      const lines = rows.map((r) => {
+        const kEl = r.querySelector('.envKey');
+        const vEl = r.querySelector('.envValue');
+        if (!kEl) return null;
+        const k = String(kEl.value || '').trim();
+        const v = String(vEl ? vEl.value : '');
+        if (!k) return null;
+        return `${k}=${v}`;
+      }).filter(Boolean).join('\n');
+      const res = await fetch('/settings/env', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: lines })
+      });
+      const data = await res.json();
+      if (data && data.status === 'ok') {
+        envStatus.textContent = 'Đã lưu';
+      } else if (data && data.error) {
+        envStatus.textContent = 'Lỗi: ' + data.error;
+      } else {
+        envStatus.textContent = 'Lỗi không xác định';
+      }
+    } catch (e) {
+      envStatus.textContent = 'Lỗi lưu .env';
+    } finally {
+      setTimeout(() => { envStatus.textContent = ''; }, 1500);
+    }
+  }
+
+  function updateFontLabel(v) {
+    if (fontScaleLabel) fontScaleLabel.textContent = `${v}%`;
+  }
+
+  async function renderPreview() {
+    if (!previewIframe || !slipJsonEl || !previewStatus || !fontScale) return;
+    previewStatus.textContent = 'Đang tạo preview...';
+    let slip = {};
+    try {
+      slip = slipJsonEl.value ? JSON.parse(slipJsonEl.value) : {};
+    } catch (e) {
+      previewStatus.textContent = 'JSON không hợp lệ';
+      setTimeout(() => { previewStatus.textContent = ''; }, 1500);
+      return;
+    }
+
+    const payload = {
+      slip,
+      fontScale: Number(fontScale.value || 100),
+      sizeTitle: Number(document.getElementById('sizeTitle').value || 28),
+      sizeSubtitle: Number(document.getElementById('sizeSubtitle').value || 15),
+      sizeContent: Number(document.getElementById('sizeContent').value || 22),
+      sizeReason: Number(document.getElementById('sizeReason').value || 19),
+      sizeQr: Number(document.getElementById('sizeQr').value || 200)
+    };
+
+    try {
+      const res = await fetch('/settings/preview-return-slip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const html = await res.text();
+      // Use srcdoc for iframe preview
+      previewIframe.srcdoc = html;
+      previewStatus.textContent = 'Xong';
+      setTimeout(() => { previewStatus.textContent = ''; }, 1500);
+    } catch (e) {
+      previewStatus.textContent = 'Lỗi render preview';
+      setTimeout(() => { previewStatus.textContent = ''; }, 1500);
+    }
+  }
+
+  function openPreviewWindow() {
+    if (!slipJsonEl || !fontScale) return;
+    let slip = {};
+    try {
+      slip = slipJsonEl.value ? JSON.parse(slipJsonEl.value) : {};
+    } catch (e) {
+      previewStatus.textContent = 'JSON không hợp lệ';
+      setTimeout(() => { previewStatus.textContent = ''; }, 1500);
+      return;
+    }
+
+    const payload = {
+      slip,
+      fontScale: Number(fontScale.value || 100),
+      sizeTitle: Number(document.getElementById('sizeTitle').value || 28),
+      sizeSubtitle: Number(document.getElementById('sizeSubtitle').value || 15),
+      sizeContent: Number(document.getElementById('sizeContent').value || 22),
+      sizeReason: Number(document.getElementById('sizeReason').value || 19),
+      sizeQr: Number(document.getElementById('sizeQr').value || 200)
+    };
+
+    // Request HTML then open in new window as blob URL
+    previewStatus.textContent = 'Đang mở cửa sổ preview...';
+    fetch('/settings/preview-return-slip', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then(r => r.text()).then(html => {
+      const blob = new Blob([html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener');
+      previewStatus.textContent = '';
+      setTimeout(() => { previewStatus.textContent = ''; }, 500);
+    }).catch(() => {
+      previewStatus.textContent = 'Lỗi mở preview';
+      setTimeout(() => { previewStatus.textContent = ''; }, 500);
+    });
+  }
+
+  // attach listeners
+  if (btnSettings) btnSettings.addEventListener('click', showSettings);
+  if (btnCloseSettings) btnCloseSettings.addEventListener('click', hideSettings);
+  if (btnLoadEnv) btnLoadEnv.addEventListener('click', loadEnv);
+  if (btnSaveEnv) btnSaveEnv.addEventListener('click', saveEnv);
+  if (btnAddEnvVar) btnAddEnvVar.addEventListener('click', () => {
+    if (envList) envList.appendChild(createEnvRow('', '', true));
+  });
+  if (btnRenderPreview) btnRenderPreview.addEventListener('click', renderPreview);
+  if (btnOpenPreviewWindow) btnOpenPreviewWindow.addEventListener('click', openPreviewWindow);
+  if (fontScale) {
+    fontScale.addEventListener('input', (e) => {
+      updateFontLabel(e.target.value);
+    });
+    updateFontLabel(fontScale.value || 100);
+  }
 }
 
 bindEvents();
