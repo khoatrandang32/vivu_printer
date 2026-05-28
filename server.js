@@ -1006,9 +1006,9 @@ function renderUrlToPdf(url) {
       ));
     }
 
-    // Tạo thư mục temp riêng để tránh Chrome/Edge ghi nhầm tên file
-    const tmpDir = path.join(os.tmpdir(), `vtp_${Date.now()}_${Math.floor(Math.random() * 1e6)}`);
-    const pdfPath = path.join(tmpDir, 'output.pdf');
+    // Tạo thư mục temp riêng, dùng tên ngắn để tránh long-path issues
+    const tmpDir = path.join(os.tmpdir(), `vtp${Date.now()}`);
+    const pdfPath = path.join(tmpDir, 'out.pdf');
 
     try {
       fs.mkdirSync(tmpDir, { recursive: true });
@@ -1018,7 +1018,7 @@ function renderUrlToPdf(url) {
 
     // A5 portrait: 148x210mm → inches: 5.827 x 8.268
     const args = [
-      '--headless=new',
+      '--headless',           // dùng --headless (legacy) thay vì --headless=new để tương thích rộng hơn
       '--disable-gpu',
       '--no-sandbox',
       '--disable-dev-shm-usage',
@@ -1038,18 +1038,21 @@ function renderUrlToPdf(url) {
       url
     ];
 
-    // Spawn thay vì exec để tránh shell quoting issues trên Windows
     const { spawn } = require('child_process');
     console.log(`[VTP] Render URL: ${url}`);
     console.log(`[VTP] Browser: ${browserPath}`);
     console.log(`[VTP] Output PDF: ${pdfPath}`);
+    console.log(`[VTP] Args: ${args.join(' ')}`);
 
     const child = spawn(browserPath, args, {
       windowsHide: true,
+      cwd: tmpDir,   // đặt cwd = tmpDir để Edge ghi output.pdf vào đây nếu bỏ qua path
       stdio: ['ignore', 'pipe', 'pipe']
     });
 
     let stderr = '';
+    let stdout = '';
+    child.stdout && child.stdout.on('data', d => { stdout += d.toString(); });
     child.stderr && child.stderr.on('data', d => { stderr += d.toString(); });
 
     const timer = setTimeout(() => {
@@ -1059,26 +1062,48 @@ function renderUrlToPdf(url) {
 
     child.on('close', (code) => {
       clearTimeout(timer);
-      // Đợi 500ms để đảm bảo OS flush file xuống disk
+      console.log(`[VTP] Edge exit code: ${code}`);
+      if (stderr) console.log(`[VTP] Edge stderr: ${stderr.slice(0, 500)}`);
+      if (stdout) console.log(`[VTP] Edge stdout: ${stdout.slice(0, 200)}`);
+
+      // Đợi 800ms để OS flush file xuống disk
       setTimeout(() => {
-        // Chrome/Edge đôi khi ghi vào thư mục làm việc thay vì path chỉ định
-        // → tìm file PDF trong tmpDir
+        // Tìm PDF theo thứ tự ưu tiên:
+        // 1. Path chỉ định (out.pdf trong tmpDir)
+        // 2. Bất kỳ .pdf nào trong tmpDir (Edge đôi khi đặt tên khác)
+        // 3. output.pdf trong thư mục home user (Edge legacy behavior)
+        const searchPaths = [
+          pdfPath,
+          path.join(tmpDir, 'output.pdf'),
+          path.join(os.homedir(), 'out.pdf'),
+          path.join(os.homedir(), 'output.pdf'),
+          path.join(process.cwd(), 'out.pdf'),
+          path.join(process.cwd(), 'output.pdf'),
+        ];
+
         let foundPath = null;
-        if (fs.existsSync(pdfPath)) {
-          foundPath = pdfPath;
-        } else {
-          // Tìm bất kỳ file .pdf nào trong tmpDir
+
+        // Tìm trong searchPaths
+        for (const p of searchPaths) {
+          if (fs.existsSync(p)) { foundPath = p; break; }
+        }
+
+        // Tìm bất kỳ .pdf nào trong tmpDir
+        if (!foundPath) {
           try {
-            const files = fs.readdirSync(tmpDir).filter(f => f.endsWith('.pdf'));
+            const files = fs.readdirSync(tmpDir).filter(f => f.toLowerCase().endsWith('.pdf'));
             if (files.length > 0) foundPath = path.join(tmpDir, files[0]);
           } catch {}
         }
 
         if (!foundPath) {
-          // Dọn thư mục temp
           try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-          const errMsg = stderr.slice(0, 300) || `exit code ${code}`;
-          return reject(new Error(`Không tạo được PDF từ URL "${url}". ${errMsg}`));
+          const errDetail = [
+            stderr ? `stderr: ${stderr.slice(0, 300)}` : '',
+            `exit code ${code}`,
+            `tmpDir contents: ${(() => { try { return fs.readdirSync(tmpDir).join(', ') || '(trống)'; } catch { return '(không đọc được)'; } })()}`
+          ].filter(Boolean).join(' | ');
+          return reject(new Error(`Không tạo được PDF từ URL "${url}". ${errDetail}`));
         }
 
         // Kiểm tra file có nội dung không (> 100 bytes)
@@ -1088,14 +1113,14 @@ function renderUrlToPdf(url) {
             try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
             return reject(new Error(`PDF tạo ra bị rỗng (${stat.size} bytes) từ URL "${url}"`));
           }
+          console.log(`[VTP] PDF tạo thành công: ${foundPath} (${stat.size} bytes)`);
         } catch (e) {
           try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
           return reject(new Error(`Không đọc được file PDF: ${e.message}`));
         }
 
-        console.log(`[VTP] PDF tạo thành công: ${foundPath} (${fs.statSync(foundPath).size} bytes)`);
         resolve(foundPath);
-      }, 500);
+      }, 800);
     });
 
     child.on('error', (err) => {
@@ -1273,6 +1298,17 @@ app.get('/config', (req, res) => {
   res.json({ port: PORT, printerName: CURRENT_PRINTER, socket, websocket: socket });
 });
 
+// Mở trình duyệt tự động (chỉ khi chạy từ file .exe)
+function openBrowserUI(port) {
+  const url = `http://localhost:${port}/`;
+  // pkg đóng gói exe sẽ có process.pkg, node thường thì không
+  const isExe = typeof process.pkg !== 'undefined';
+  if (!isExe) return;
+  const cmd = `start "" "${url}"`;
+  exec(cmd, { windowsHide: true }, () => {});
+  console.log(`[UI] Mở trình duyệt: ${url}`);
+}
+
 // Khởi động server
 app.listen(PORT, () => {
   console.log(`Print Server chạy tại http://localhost:${PORT}/`);
@@ -1291,6 +1327,7 @@ app.listen(PORT, () => {
     .catch(() => {});
   startUdpBroadcast();
   startSocketClient();
+  openBrowserUI(PORT);
 });
 
 function getExeCommandForStartup() {

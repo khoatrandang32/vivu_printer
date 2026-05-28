@@ -54,7 +54,7 @@ async function buildReturnToWorkshopSlipHtml(slip) {
   <meta charset="utf-8" />
   <title>Phiếu trả lại xưởng ${code}</title>
   <style>
-    @page { size: A5 portrait; margin: 12mm; }
+    @page { size: A5 portrait; margin: 10mm; }
     * { box-sizing: border-box; }
     body {
       font-family: "Segoe UI", Arial, sans-serif;
@@ -62,55 +62,61 @@ async function buildReturnToWorkshopSlipHtml(slip) {
       margin: 0;
       padding: 0;
     }
-    .sheet { padding: 8px 4px; }
+    .sheet { padding: 6px 2px; }
     h1 {
-      font-size: 22px;
+      font-size: 28px;
+      font-weight: 900;
       margin: 0 0 4px;
       letter-spacing: 0.5px;
     }
     .subtitle {
-      font-size: 13px;
+      font-size: 15px;
+      font-weight: 500;
       color: #6b7280;
-      margin-bottom: 20px;
+      margin-bottom: 18px;
     }
     .row {
       border-bottom: 1px solid #e5e7eb;
-      padding: 12px 0;
+      padding: 13px 0;
     }
     .row:last-of-type { border-bottom: none; }
     .label {
-      font-size: 12px;
+      font-size: 13px;
+      font-weight: 600;
       color: #6b7280;
       text-transform: uppercase;
-      letter-spacing: 0.4px;
-      margin-bottom: 4px;
+      letter-spacing: 0.5px;
+      margin-bottom: 5px;
     }
     .value {
-      font-size: 17px;
-      font-weight: 700;
-      line-height: 1.35;
+      font-size: 22px;
+      font-weight: 800;
+      line-height: 1.3;
       word-break: break-word;
     }
-    .value.reason { font-size: 15px; font-weight: 600; }
-    .muted { color: #6b7280; font-weight: 500; }
+    .value.reason {
+      font-size: 19px;
+      font-weight: 700;
+    }
+    .muted { color: #6b7280; font-weight: 600; }
     .qr {
-      margin-top: 20px;
+      margin-top: 18px;
       text-align: center;
       padding-top: 8px;
     }
     .qr img {
-      width: 180px;
-      height: 180px;
+      width: 200px;
+      height: 200px;
       object-fit: contain;
     }
     .qr .code {
       margin-top: 8px;
-      font-size: 14px;
-      font-weight: 700;
+      font-size: 16px;
+      font-weight: 800;
       color: #374151;
     }
     .qr.missing {
-      font-size: 14px;
+      font-size: 15px;
       color: #9ca3af;
       padding: 24px 0;
     }
