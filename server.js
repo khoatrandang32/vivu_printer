@@ -12,6 +12,7 @@ const crypto = require('crypto');
 const dgram = require('dgram');
 const { io } = require('socket.io-client');
 const { printReturnToWorkshopSlip, buildReturnToWorkshopSlipHtml } = require('./returnSlipPrint');
+const { printOtherCarrierShip, buildOtherCarrierShipHtml } = require('./otherCarrierShipPrint');
 
 // Cấu hình
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -110,6 +111,49 @@ app.post('/settings/preview-return-slip', express.json(), async (req, res) => {
     };
 
     let html = await buildReturnToWorkshopSlipHtml(slip, opts);
+
+    // Inject global zoom for preview if requested (keeps template sizes intact but scales whole preview)
+    if (sFontScale && sFontScale !== 100) {
+      const zoomStyle = `<style>body{zoom:${sFontScale}%}</style>`;
+      html = html.replace('</head>', `${zoomStyle}</head>`);
+    }
+
+    res.type('text/html').send(html);
+  } catch (err) {
+    res.status(500).json({ error: String(err.message || err) });
+  }
+});
+
+ // Preview other-carrier ship label HTML with preview options (font scaling + per-element sizes)
+app.post('/settings/preview-other-carrier-ship', express.json(), async (req, res) => {
+  try {
+    const shipLabel = req.body && req.body.shipLabel ? req.body.shipLabel : {};
+    const fontScale = Number(req.body && req.body.fontScale ? Number(req.body.fontScale) : 100);
+    const sizeTitle = Number(req.body && Number.isFinite(Number(req.body.sizeTitle)) ? Number(req.body.sizeTitle) : 28);
+    const sizeSubtitle = Number(req.body && Number.isFinite(Number(req.body.sizeSubtitle)) ? Number(req.body.sizeSubtitle) : 15);
+    const sizeContent = Number(req.body && Number.isFinite(Number(req.body.sizeContent)) ? Number(req.body.sizeContent) : 22);
+    const sizeLabel = Number(req.body && Number.isFinite(Number(req.body.sizeLabel)) ? Number(req.body.sizeLabel) : 13);
+    const sizeOrderCode = Number(req.body && Number.isFinite(Number(req.body.sizeOrderCode)) ? Number(req.body.sizeOrderCode) : 19);
+
+    // basic clamps to avoid crazy values
+    const clamp = (v, min, max) => Math.max(min, Math.min(max, Math.round(Number(v) || 0)));
+    const sFontScale = clamp(fontScale, 10, 400);
+    const sTitle = clamp(sizeTitle, 8, 200);
+    const sSubtitle = clamp(sizeSubtitle, 8, 200);
+    const sContent = clamp(sizeContent, 8, 200);
+    const sLabel = clamp(sizeLabel, 8, 200);
+    const sOrderCode = clamp(sizeOrderCode, 8, 200);
+
+    // Pass explicit size options into the template generator so sizes are applied directly
+    const opts = {
+      sizeTitle: sTitle,
+      sizeSubtitle: sSubtitle,
+      sizeContent: sContent,
+      sizeLabel: sLabel,
+      sizeOrderCode: sOrderCode,
+    };
+
+    let html = await buildOtherCarrierShipHtml(shipLabel, opts);
 
     // Inject global zoom for preview if requested (keeps template sizes intact but scales whole preview)
     if (sFontScale && sFontScale !== 100) {
@@ -283,7 +327,7 @@ function buildSocketHelloPayload() {
     ip: getLocalIPv4(),
     port: PORT,
     printerName: CURRENT_PRINTER,
-    capabilities: ['print_ghtk_label', 'print_viettelpost', 'print_return_to_workshop_slip'],
+    capabilities: ['print_ghtk_label', 'print_viettelpost', 'print_return_to_workshop_slip', 'print_other_carrier_ship'],
     ts: Date.now()
   };
 }
@@ -394,6 +438,52 @@ async function handleGatewayCommand(payload) {
       console.error(`[SOCKET][RTX] ✘ Lỗi in requestId=${requestId}: ${message}`);
       emitSocketEvent('gateway_command_result', {
         type: 'rtx_slip_print_result',
+        requestId,
+        deviceId: getSocketDeviceId(),
+        status: 'error',
+        message,
+        ts: Date.now(),
+      });
+    }
+    return;
+  }
+
+  // ── Đơn vận chuyển khác (HTML → PDF → in) ──
+  const isOtherCarrierShip = ['print_other_carrier_ship', 'other_carrier_ship', 'print_ship_label'].includes(messageType);
+  if (isOtherCarrierShip) {
+    const shipLabel = payload.shipLabel && typeof payload.shipLabel === 'object' ? payload.shipLabel : payload;
+    const requestId = String(payload.requestId || payload.request_id || payload.id || crypto.randomUUID());
+    console.log(`[SOCKET][SHIP] ▶ Bắt đầu in đơn vận chuyển khác | requestId=${requestId}`);
+    emitSocketEvent('gateway_command_ack', {
+      type: 'other_carrier_ship_print_ack',
+      requestId,
+      deviceId: getSocketDeviceId(),
+      status: 'received',
+      ts: Date.now(),
+    });
+    try {
+      const result = await printOtherCarrierShip(shipLabel, {
+        renderDocumentToPdf: (docPath) => {
+          const fileUrl = 'file:///' + String(docPath).replace(/\\/g, '/');
+          return renderUrlToPdf(fileUrl);
+        },
+        sendToPrinterPdf,
+        printerName: CURRENT_PRINTER,
+      });
+      emitSocketEvent('gateway_command_result', {
+        type: 'other_carrier_ship_print_result',
+        requestId,
+        deviceId: getSocketDeviceId(),
+        status: 'success',
+        result,
+        ts: Date.now(),
+      });
+      console.log(`[SOCKET][SHIP] ✔ In đơn vận chuyển thành công | requestId=${requestId}`);
+    } catch (err) {
+      const message = String(err.message || err);
+      console.error(`[SOCKET][SHIP] ✘ Lỗi in requestId=${requestId}: ${message}`);
+      emitSocketEvent('gateway_command_result', {
+        type: 'other_carrier_ship_print_result',
         requestId,
         deviceId: getSocketDeviceId(),
         status: 'error',
@@ -1275,6 +1365,25 @@ app.post('/print-return-to-workshop-slip', express.json({ limit: '1mb' }), async
     return res.json({ status: 'success', result });
   } catch (err) {
     console.error('[API /print-return-to-workshop-slip] Error:', err);
+    return res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+app.post('/print-other-carrier-ship', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const shipLabel = body.shipLabel && typeof body.shipLabel === 'object' ? body.shipLabel : body;
+    const result = await printOtherCarrierShip(shipLabel, {
+      renderDocumentToPdf: (docPath) => {
+        const fileUrl = 'file:///' + String(docPath).replace(/\\/g, '/');
+        return renderUrlToPdf(fileUrl);
+      },
+      sendToPrinterPdf,
+      printerName: CURRENT_PRINTER,
+    });
+    return res.json({ status: 'success', result });
+  } catch (err) {
+    console.error('[API /print-other-carrier-ship] Error:', err);
     return res.status(500).json({ status: 'error', message: err.message });
   }
 });

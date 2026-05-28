@@ -280,6 +280,13 @@ function bindEvents() {
   const previewStatus = document.getElementById('previewStatus');
   const fontScale = document.getElementById('fontScale');
   const fontScaleLabel = document.getElementById('fontScaleLabel');
+  const shipLabelJson = document.getElementById('shipLabelJson');
+  const shipPreviewIframe = document.getElementById('shipPreviewIframe');
+  const shipPreviewStatus = document.getElementById('shipPreviewStatus');
+  const shipFontScale = document.getElementById('shipFontScale');
+  const shipFontScaleLabel = document.getElementById('shipFontScaleLabel');
+  const btnRenderShipPreview = document.getElementById('btnRenderShipPreview');
+  const btnOpenShipPreviewWindow = document.getElementById('btnOpenShipPreviewWindow');
 
   function showSettings() {
     if (settingsModal) {
@@ -467,6 +474,86 @@ function bindEvents() {
     });
   }
 
+  function updateShipFontLabel(v) {
+    if (shipFontScaleLabel) shipFontScaleLabel.textContent = `${v}%`;
+  }
+
+  async function renderShipPreview() {
+    if (!shipPreviewIframe || !shipLabelJson || !shipPreviewStatus || !shipFontScale) return;
+    shipPreviewStatus.textContent = 'Đang tạo preview...';
+    let shipLabel = {};
+    try {
+      shipLabel = shipLabelJson.value ? JSON.parse(shipLabelJson.value) : {};
+    } catch (e) {
+      shipPreviewStatus.textContent = 'JSON không hợp lệ';
+      setTimeout(() => { shipPreviewStatus.textContent = ''; }, 1500);
+      return;
+    }
+
+    const payload = {
+      shipLabel,
+      fontScale: Number(shipFontScale.value || 100),
+      sizeTitle: Number(document.getElementById('shipSizeTitle').value || 28),
+      sizeSubtitle: Number(document.getElementById('shipSizeSubtitle').value || 15),
+      sizeContent: Number(document.getElementById('shipSizeContent').value || 22),
+      sizeLabel: Number(document.getElementById('shipSizeLabel').value || 13),
+      sizeOrderCode: Number(document.getElementById('shipSizeOrderCode').value || 19)
+    };
+
+    try {
+      const res = await fetch('/settings/preview-other-carrier-ship', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const html = await res.text();
+      shipPreviewIframe.srcdoc = html;
+      shipPreviewStatus.textContent = 'Xong';
+      setTimeout(() => { shipPreviewStatus.textContent = ''; }, 1500);
+    } catch (e) {
+      shipPreviewStatus.textContent = 'Lỗi render preview';
+      setTimeout(() => { shipPreviewStatus.textContent = ''; }, 1500);
+    }
+  }
+
+  function openShipPreviewWindow() {
+    if (!shipLabelJson || !shipFontScale) return;
+    let shipLabel = {};
+    try {
+      shipLabel = shipLabelJson.value ? JSON.parse(shipLabelJson.value) : {};
+    } catch (e) {
+      shipPreviewStatus.textContent = 'JSON không hợp lệ';
+      setTimeout(() => { shipPreviewStatus.textContent = ''; }, 1500);
+      return;
+    }
+
+    const payload = {
+      shipLabel,
+      fontScale: Number(shipFontScale.value || 100),
+      sizeTitle: Number(document.getElementById('shipSizeTitle').value || 28),
+      sizeSubtitle: Number(document.getElementById('shipSizeSubtitle').value || 15),
+      sizeContent: Number(document.getElementById('shipSizeContent').value || 22),
+      sizeLabel: Number(document.getElementById('shipSizeLabel').value || 13),
+      sizeOrderCode: Number(document.getElementById('shipSizeOrderCode').value || 19)
+    };
+
+    shipPreviewStatus.textContent = 'Đang mở cửa sổ preview...';
+    fetch('/settings/preview-other-carrier-ship', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then(r => r.text()).then(html => {
+      const blob = new Blob([html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener');
+      shipPreviewStatus.textContent = '';
+      setTimeout(() => { shipPreviewStatus.textContent = ''; }, 500);
+    }).catch(() => {
+      shipPreviewStatus.textContent = 'Lỗi mở preview';
+      setTimeout(() => { shipPreviewStatus.textContent = ''; }, 500);
+    });
+  }
+
   // attach listeners
   if (btnSettings) btnSettings.addEventListener('click', showSettings);
   if (btnCloseSettings) btnCloseSettings.addEventListener('click', hideSettings);
@@ -482,6 +569,14 @@ function bindEvents() {
       updateFontLabel(e.target.value);
     });
     updateFontLabel(fontScale.value || 100);
+  }
+  if (btnRenderShipPreview) btnRenderShipPreview.addEventListener('click', renderShipPreview);
+  if (btnOpenShipPreviewWindow) btnOpenShipPreviewWindow.addEventListener('click', openShipPreviewWindow);
+  if (shipFontScale) {
+    shipFontScale.addEventListener('input', (e) => {
+      updateShipFontLabel(e.target.value);
+    });
+    updateShipFontLabel(shipFontScale.value || 100);
   }
 }
 

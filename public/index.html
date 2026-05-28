@@ -194,6 +194,59 @@ PRINT 1</textarea>
           <div style="margin-top:10px; border:1px solid #e5e7eb; border-radius:6px; overflow:hidden; height:360px;">
             <iframe id="previewIframe" style="width:100%; height:100%; border:0; background:#fff;"></iframe>
           </div>
+
+          <div style="border-top:1px solid #e5e7eb; margin:16px 0;"></div>
+
+          <h3 style="margin-top:0;">Preview đơn vận chuyển khác</h3>
+          <label style="display:block; font-size:13px; color:#444; margin-bottom:6px;">Dữ liệu đơn vận chuyển (JSON)</label>
+          <textarea id="shipLabelJson" rows="6" style="width:100%; box-sizing:border-box; padding:8px; font-family:ui-monospace,monospace;">{
+  "senderInfo": "Váy cưới Vivu: 0942000300 - Xóm 4, Xã Giao Minh, tỉnh Ninh Bình.",
+  "receiverName": "Nguyễn Văn A",
+  "receiverPhone": "0912345678",
+  "receiverAddress": "123 Đường ABC, Quận 1, TP.HCM",
+  "coachPhone": "0987654321",
+  "orderCode": "VIVU-123"
+}</textarea>
+
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:8px;">
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước chữ - Tiêu đề (px)</label>
+              <input id="shipSizeTitle" type="number" min="8" max="200" value="28" style="width:100%; padding:6px;" />
+            </div>
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước chữ - Subtitle (px)</label>
+              <input id="shipSizeSubtitle" type="number" min="8" max="200" value="15" style="width:100%; padding:6px;" />
+            </div>
+
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước chữ - Nội dung (px)</label>
+              <input id="shipSizeContent" type="number" min="8" max="200" value="22" style="width:100%; padding:6px;" />
+            </div>
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước chữ - Label (px)</label>
+              <input id="shipSizeLabel" type="number" min="8" max="200" value="13" style="width:100%; padding:6px;" />
+            </div>
+
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước chữ - Mã đơn (px)</label>
+              <input id="shipSizeOrderCode" type="number" min="8" max="200" value="19" style="width:100%; padding:6px;" />
+            </div>
+            <div>
+              <label style="font-size:13px; color:#444;">Tỉ lệ toàn cục preview (%)</label>
+              <input id="shipFontScale" type="range" min="50" max="200" value="100" style="width:100%" />
+              <div style="font-size:12px; margin-top:4px;">Tỉ lệ: <span id="shipFontScaleLabel">100%</span></div>
+            </div>
+          </div>
+
+          <div style="display:flex; gap:8px; margin-top:10px;">
+            <button id="btnRenderShipPreview" style="background:#1f6feb;">Xem trước</button>
+            <button id="btnOpenShipPreviewWindow" type="button">Mở trong cửa sổ mới</button>
+            <span id="shipPreviewStatus" class="mono" style="margin-left:8px;"></span>
+          </div>
+
+          <div style="margin-top:10px; border:1px solid #e5e7eb; border-radius:6px; overflow:hidden; height:360px;">
+            <iframe id="shipPreviewIframe" style="width:100%; height:100%; border:0; background:#fff;"></iframe>
+          </div>
         </div>
       </div>
     </div>
