@@ -1,16 +1,26 @@
 // NodeJS Print Server cho HPRT N43 (TSPL) trên Windows
 // Yêu cầu: CommonJS, Express, không dùng native module phức tạp, gửi RAW qua lệnh Windows (print/copy)
 
-require('dotenv').config();
-const express = require('express');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
+const os = require('os');
 const https = require('https');
 const { exec } = require('child_process');
 const crypto = require('crypto');
 const dgram = require('dgram');
 const { io } = require('socket.io-client');
+const express = require('express');
+
+// Ưu tiên load .env từ thư mục chứa server.js hoặc thư mục thực thi
+let envPath = path.join(__dirname, '.env');
+if (!fs.existsSync(envPath)) {
+  envPath = path.join(path.dirname(process.execPath), '.env');
+}
+if (fs.existsSync(envPath)) {
+  require('dotenv').config({ path: envPath });
+} else {
+  require('dotenv').config();
+}
 const { printReturnToWorkshopSlip, buildReturnToWorkshopSlipHtml } = require('./returnSlipPrint');
 const { printOtherCarrierShip, buildOtherCarrierShipHtml } = require('./otherCarrierShipPrint');
 
@@ -52,13 +62,57 @@ const app = express();
 app.use(express.text({ type: 'text/plain', limit: '1mb' }));
 // Nhận JSON cho /print-json
 app.use(express.json({ limit: '1mb' }));
-const PUBLIC_DIR = path.join(__dirname, 'public');
+
+// Xác định thư mục public (hỗ trợ cả dev, pkg exe và Electron build)
+const pathsToTry = [
+  // Electron asar unpacked: resources/app.asar.unpacked/public
+  path.join(__dirname, '..', 'app.asar.unpacked', 'public'),
+  // Dev / node trực tiếp
+  path.join(__dirname, 'public'),
+  // Electron không asar: resources/app/public
+  path.join(__dirname, '..', 'app', 'public'),
+  // pkg exe: cạnh file exe
+  path.join(path.dirname(process.execPath), 'public'),
+  // cwd fallback
+  path.join(process.cwd(), 'public'),
+];
+
+let PUBLIC_DIR = pathsToTry[0];
+for (const p of pathsToTry) {
+  console.log(`[SERVER] Checking public dir: ${p} -> ${fs.existsSync(p)}`);
+  if (fs.existsSync(p)) {
+    PUBLIC_DIR = p;
+    break;
+  }
+}
+
+console.log(`[SERVER] Final Public directory: ${PUBLIC_DIR}`);
 app.use(express.static(PUBLIC_DIR));
 
+// Route mặc định để phục vụ index.html nếu static không khớp
+app.get('/', (req, res) => {
+  const indexPath = path.join(PUBLIC_DIR, 'index.html');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.status(404).send('Không tìm thấy thư mục public hoặc index.html. Vui lòng kiểm tra cấu trúc thư mục.');
+  }
+});
+
 // ---------------- Settings endpoints (UI) ----------------
+// Helper to get .env path
+function getEnvPath() {
+  let p = path.join(process.cwd(), '.env');
+  if (fs.existsSync(p)) return p;
+  p = path.join(path.dirname(process.execPath), '.env');
+  if (fs.existsSync(p)) return p;
+  p = path.join(__dirname, '.env');
+  return p;
+}
+
 // Read .env content
 app.get('/settings/env', (req, res) => {
-  const envPath = path.join(process.cwd(), '.env');
+  const envPath = getEnvPath();
   try {
     if (!fs.existsSync(envPath)) return res.json({ content: '' });
     const content = fs.readFileSync(envPath, 'utf8');
@@ -71,7 +125,7 @@ app.get('/settings/env', (req, res) => {
 // Write .env content (simple editor)
 app.post('/settings/env', express.json(), (req, res) => {
   const content = String((req.body && req.body.content) || '');
-  const envPath = path.join(process.cwd(), '.env');
+  const envPath = getEnvPath();
   try {
     fs.writeFileSync(envPath, content, 'utf8');
     return res.json({ status: 'ok' });
@@ -1476,26 +1530,6 @@ app.get('/config', (req, res) => {
   res.json({ port: PORT, printerName: CURRENT_PRINTER, socket, websocket: socket });
 });
 
-// Khởi động server
-app.listen(PORT, () => {
-  console.log(`Print Server chạy tại http://localhost:${PORT}/`);
-  console.log(`Printer name: "${CURRENT_PRINTER}" (có thể đổi qua .env hoặc /printer)`);
-  detectPrinters()
-    .then((list) => {
-      const def = list.find((p) => p.default);
-      if (def && !CURRENT_PRINTER) {
-        CURRENT_PRINTER = def.name;
-        console.log(`[CONFIG] Auto chọn máy in mặc định: ${CURRENT_PRINTER}`);
-      } else {
-        const names = list.map((p) => p.name).join(', ');
-        console.log(`[INFO] Máy in khả dụng: ${names || '(không phát hiện được)'}`);
-      }
-    })
-    .catch(() => {});
-  startUdpBroadcast();
-  startSocketClient();
-});
-
 function getExeCommandForStartup() {
   const exe = process.execPath;
   const workDir = path.dirname(exe);
@@ -1624,4 +1658,29 @@ app.post('/startup/uninstall', async (req, res) => {
   } catch (e) {
     res.status(500).json({ status: 'error', message: e.message });
   }
+});
+
+// ── Khởi động server ────────────────────────────────────────────────────────
+const server = app.listen(PORT, () => {
+  console.log(`Print Server chạy tại http://localhost:${PORT}/`);
+  console.log(`Printer name: "${CURRENT_PRINTER}" (có thể đổi qua .env hoặc /printer)`);
+  detectPrinters()
+    .then((list) => {
+      const def = list.find((p) => p.default);
+      if (def && !CURRENT_PRINTER) {
+        CURRENT_PRINTER = def.name;
+        console.log(`[CONFIG] Auto chọn máy in mặc định: ${CURRENT_PRINTER}`);
+      } else {
+        const names = list.map((p) => p.name).join(', ');
+        console.log(`[INFO] Máy in khả dụng: ${names || '(không phát hiện được)'}`);
+      }
+    })
+    .catch(() => {});
+  startUdpBroadcast();
+  startSocketClient();
+});
+
+server.on('error', (e) => {
+  console.error(`[SERVER] Lỗi khởi động server: ${e.message}`);
+  process.exit(1);
 });

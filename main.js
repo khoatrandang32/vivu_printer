@@ -2,15 +2,28 @@
 
 const { app, BrowserWindow, Tray, Menu, nativeImage, shell, dialog } = require('electron');
 const path = require('path');
-const { fork } = require('child_process');
+const { fork, spawn } = require('child_process');
 const http = require('http');
 
 // Đọc PORT từ .env thủ công (dotenv chưa load ở main process)
 function readEnvPort() {
   try {
     const fs = require('fs');
-    const envPath = path.join(process.cwd(), '.env');
-    if (!fs.existsSync(envPath)) return 3000;
+    // Ưu tiên thư mục chứa file thực thi (đối với bản build)
+    // Ưu tiên thư mục chứa file thực thi (đối với bản build)
+    let envPath = path.join(path.dirname(process.execPath), '.env');
+    // Nếu không tìm thấy, thử trong thư mục resources (nơi extraResources được đặt)
+    if (!fs.existsSync(envPath) && app.isPackaged) {
+      envPath = path.join(process.resourcesPath, '.env');
+    }
+    // Nếu vẫn không tìm thấy, thử trong thư mục làm việc hiện tại (đối với dev)
+    if (!fs.existsSync(envPath)) {
+      envPath = path.join(process.cwd(), '.env');
+    }
+    if (!fs.existsSync(envPath)) {
+      console.warn('[ELECTRON] Không tìm thấy file .env, sử dụng cổng mặc định 3000.');
+      return 3000;
+    }
     const content = fs.readFileSync(envPath, 'utf8');
     const match = content.match(/^PORT\s*=\s*(\d+)/m);
     return match ? parseInt(match[1], 10) : 3000;
@@ -59,12 +72,22 @@ if (!gotTheLock) {
 
 // ── Khởi động Express server trong process con ──────────────────────────────
 function startServer() {
-  const serverPath = path.join(__dirname, 'server.js');
+  // Xác định thư mục app (nơi chứa server.js và .env)
+  const appDir = app.isPackaged
+    ? path.join(process.resourcesPath, 'app')  // resources/app/
+    : __dirname;                                 // dev: thư mục project
+
+  const serverPath = path.join(appDir, 'server.js');
+  console.log(`[ELECTRON] Khởi động server từ: ${serverPath}, cwd: ${appDir}`);
+
   serverProcess = fork(serverPath, [], {
-    cwd: process.cwd(),
+    cwd: appDir,
     env: { ...process.env },
-    silent: false,
+    silent: true,
   });
+
+  if (serverProcess.stdout) serverProcess.stdout.on('data', (data) => console.log(`[SERVER OUT] ${data}`));
+  if (serverProcess.stderr) serverProcess.stderr.on('data', (data) => console.error(`[SERVER ERR] ${data}`));
 
   serverProcess.on('error', (err) => {
     console.error('[ELECTRON] Server process lỗi:', err.message);

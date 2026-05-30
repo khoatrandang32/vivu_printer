@@ -8,8 +8,9 @@
     "start": "node server.js",
     "electron": "electron .",
     "build:exe": "pkg -t node18-win-x64 --output dist/vivu_printer_server.exe server.js",
-    "build:electron": "electron-packager . \"VIVU Printer\" --platform=win32 --arch=x64 --out=dist-electron --overwrite --icon=public/icon.ico --ignore=dist --ignore=dist-electron --ignore=.git --ignore=dist.rar",
-    "build:all": "npm run build:exe && npm run build:electron"
+    "build:electron": "electron-packager . \"VIVU Printer\" --platform=win32 --arch=x64 --out=dist-electron --overwrite --icon=public/icon.ico --no-asar --ignore=dist --ignore=dist-electron --ignore=.git --ignore=dist.rar",
+    "build:installer": "electron-builder --win",
+    "build:all": "npm run build:exe && npm run build:electron && npm run build:installer"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
@@ -40,15 +41,25 @@
     },
     "files": [
       "main.js",
-      "server.js",
-      "returnSlipPrint.js",
       "public/**/*",
       "node_modules/**/*",
       "!node_modules/electron/**/*",
       "!node_modules/electron-builder/**/*",
       "!node_modules/pkg/**/*"
     ],
-    "extraFiles": [
+    "extraResources": [
+      {
+        "from": "dist/vivu_printer_server.exe",
+        "to": "vivu_printer_server.exe"
+      },
+      {
+        "from": "server.js",
+        "to": "server.js"
+      },
+      {
+        "from": "returnSlipPrint.js",
+        "to": "returnSlipPrint.js"
+      },
       {
         "from": ".env",
         "to": ".env"
