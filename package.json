@@ -9,8 +9,8 @@
     "electron": "electron .",
     "build:exe": "pkg -t node18-win-x64 --output dist/vivu_printer_server.exe server.js",
     "build:electron": "electron-packager . \"VIVU Printer\" --platform=win32 --arch=x64 --out=dist-electron --overwrite --icon=public/icon.ico --no-asar --ignore=dist --ignore=dist-electron --ignore=.git --ignore=dist.rar",
-    "build:installer": "electron-builder --win",
-    "build:all": "npm run build:exe && npm run build:electron && npm run build:installer"
+    "build:installer": "electron-builder --win --x64",
+    "build:all": "npm run build:installer"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
@@ -37,33 +37,34 @@
     "productName": "VIVU Printer",
     "copyright": "Copyright © 2026 VIVU",
     "directories": {
-      "output": "dist-electron"
+      "output": "dist-installer"
     },
+    "asar": true,
     "files": [
       "main.js",
+      "server.js",
+      "returnSlipPrint.js",
+      "otherCarrierShipPrint.js",
+      "public/**/*",
+      "package.json",
+      "node_modules/**/*",
+      "!node_modules/electron/**/*",
+      "!node_modules/electron-builder/**/*",
+      "!node_modules/@electron/packager/**/*",
+      "!node_modules/pkg/**/*",
+      "!node_modules/pkg-fetch/**/*"
+    ],
+    "asarUnpack": [
+      "server.js",
+      "returnSlipPrint.js",
+      "otherCarrierShipPrint.js",
       "public/**/*",
       "node_modules/**/*",
       "!node_modules/electron/**/*",
       "!node_modules/electron-builder/**/*",
-      "!node_modules/pkg/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "dist/vivu_printer_server.exe",
-        "to": "vivu_printer_server.exe"
-      },
-      {
-        "from": "server.js",
-        "to": "server.js"
-      },
-      {
-        "from": "returnSlipPrint.js",
-        "to": "returnSlipPrint.js"
-      },
-      {
-        "from": ".env",
-        "to": ".env"
-      }
+      "!node_modules/@electron/packager/**/*",
+      "!node_modules/pkg/**/*",
+      "!node_modules/pkg-fetch/**/*"
     ],
     "win": {
       "target": [
@@ -72,26 +73,17 @@
           "arch": [
             "x64"
           ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
         }
       ],
-      "icon": "public/icon.png",
-      "signtoolOptions": null
+      "icon": "public/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "VIVU Printer"
-    },
-    "portable": {
-      "artifactName": "vivu-printer-portable.exe"
+      "shortcutName": "VIVU Printer",
+      "runAfterFinish": true
     }
   }
 }

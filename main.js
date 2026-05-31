@@ -72,10 +72,21 @@ if (!gotTheLock) {
 
 // ── Khởi động Express server trong process con ──────────────────────────────
 function startServer() {
-  // Xác định thư mục app (nơi chứa server.js và .env)
-  const appDir = app.isPackaged
-    ? path.join(process.resourcesPath, 'app')  // resources/app/
-    : __dirname;                                 // dev: thư mục project
+  // Xác định thư mục app (nơi chứa server.js)
+  // Khi build với electron-builder + asarUnpack, file nằm trong app.asar.unpacked/
+  let appDir;
+  if (app.isPackaged) {
+    const unpackedDir = path.join(process.resourcesPath, 'app.asar.unpacked');
+    const fs = require('fs');
+    if (fs.existsSync(path.join(unpackedDir, 'server.js'))) {
+      appDir = unpackedDir;
+    } else {
+      // Fallback: thử resources/app/
+      appDir = path.join(process.resourcesPath, 'app');
+    }
+  } else {
+    appDir = __dirname; // dev: thư mục project
+  }
 
   const serverPath = path.join(appDir, 'server.js');
   console.log(`[ELECTRON] Khởi động server từ: ${serverPath}, cwd: ${appDir}`);
@@ -124,6 +135,17 @@ function waitForServer(retries = 30, delayMs = 500) {
 }
 
 // ── Tạo cửa sổ chính ────────────────────────────────────────────────────────
+function getIconPath() {
+  const fs = require('fs');
+  // Khi build: icon nằm trong app.asar.unpacked/public/
+  if (app.isPackaged) {
+    const unpackedIcon = path.join(process.resourcesPath, 'app.asar.unpacked', 'public', 'icon.png');
+    if (fs.existsSync(unpackedIcon)) return unpackedIcon;
+  }
+  // Dev mode hoặc fallback
+  return path.join(__dirname, 'public', 'icon.png');
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1100,
@@ -131,7 +153,7 @@ function createWindow() {
     minWidth: 800,
     minHeight: 550,
     title: 'VIVU Printer',
-    icon: path.join(__dirname, 'public', 'icon.png'),
+    icon: getIconPath(),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -172,7 +194,7 @@ function createTray() {
   // Dùng icon mặc định nếu không có file icon
   let icon;
   try {
-    const iconPath = path.join(__dirname, 'public', 'icon.png');
+    const iconPath = getIconPath();
     const fs = require('fs');
     if (fs.existsSync(iconPath)) {
       icon = nativeImage.createFromPath(iconPath);

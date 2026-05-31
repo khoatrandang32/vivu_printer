@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VIVU Printer</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 0; background: #f7f7f8; color: #222; }
+    header { background: #1f6feb; color: #fff; padding: 12px 16px; }
+    main { padding: 16px; display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+    section { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; }
+    h2 { margin: 0 0 8px; font-size: 18px; }
+    label { display: block; font-size: 13px; color: #444; margin: 8px 0 4px; }
+    textarea, input, select { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-family: ui-monospace, monospace; }
+    button { padding: 8px 12px; background: #1f6feb; color: white; border: none; border-radius: 6px; cursor: pointer; }
+    button:disabled { background: #9ca3af; cursor: not-allowed; }
+    .row { display: flex; gap: 8px; }
+    .status { margin-top: 8px; font-size: 13px; }
+    .mono { font-family: ui-monospace, monospace; font-size: 12px; }
+    footer { padding: 12px 16px; text-align: center; color: #666; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>VIVU Printer</strong>
+    <span id="config" style="margin-left:8px; font-size: 12px;"></span>
+    <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+      <label for="printerSelect" style="margin:0; font-size:12px;">Chọn máy in</label>
+      <select id="printerSelect" style="width:auto; min-width:200px;"></select>
+      <button id="btnRefreshPrinters" style="background:#10b981;">Làm mới</button>
+      <button id="btnSettings" style="background:#6b7280;">Cài đặt</button>
+      <span id="printerStatus" class="mono" style="font-size:12px;"></span>
+    </div>
+  </header>
+  <main>
+    <section>
+      <h2>In TSPL (text/plain)</h2>
+      <label>TSPL</label>
+      <textarea id="tspl" rows="12">SIZE 58 mm, 40 mm
+GAP 2 mm,0
+CLS
+TEXT 10,10,0,0,1,1,"Hello TSPL"
+PRINT 1</textarea>
+      <div class="row" style="margin-top:8px;">
+        <button id="btnPrintTspl">Gửi /print</button>
+        <button id="btnClearTspl" type="button">Xóa</button>
+        <button id="btnDebugTspl" type="button" style="background:#ef4444;">Thử trực tiếp</button>
+      </div>
+      <div class="status mono" id="statusTspl"></div>
+    </section>
+
+    <section>
+      <h2>In PDF</h2>
+      <label>Chọn file PDF</label>
+      <input id="pdfFile" type="file" accept="application/pdf" />
+      <div class="row" style="margin-top:8px;">
+        <button id="btnPrintPdf">Gửi /print-pdf</button>
+      </div>
+      <div class="status mono" id="statusPdf"></div>
+    </section>
+
+    <section>
+      <h2>In nhãn GHTK</h2>
+      <label>TRACKING_ORDER (mỗi dòng 1 mã hoặc phân tách bằng dấu ,)</label>
+      <textarea id="ghtkList" rows="6" placeholder="SODE1,SODE2"></textarea>
+      <div class="row" style="margin-top:8px;">
+        <button id="btnPrintGhtk">Gửi /print-ghtk-label</button>
+      </div>
+      <div class="status mono" id="statusGhtk"></div>
+    </section>
+
+    <section>
+      <h2>In đơn ViettelPost</h2>
+      <label>Danh sách URL (mỗi dòng 1 link)</label>
+      <textarea id="vtpList" rows="6" placeholder="https://viettelpost.com.vn/...&#10;https://viettelpost.com.vn/..."></textarea>
+      <div class="row" style="margin-top:8px;">
+        <button id="btnPrintVtp">Gửi /print-viettelpost</button>
+      </div>
+      <div class="status mono" id="statusVtp"></div>
+    </section>
+
+    <section>
+      <h2>In Hóa đơn (JSON → TSPL)</h2>
+      <label>Kích thước giấy</label>
+      <select id="sizeSelect">
+        <option value="58">58 mm</option>
+        <option value="80">80 mm</option>
+      </select>
+      <label>Tiêu đề</label>
+      <input id="titleInput" placeholder="Tiêu đề" value="VIVU" />
+      <label>QR (tuỳ chọn)</label>
+      <input id="qrInput" placeholder="Nội dung QR" />
+      <label>Danh sách sản phẩm (JSON)</label>
+      <textarea id="itemsJson" rows="10">[
+  { "name": "Cà phê", "qty": 2, "price": 25000 },
+  { "name": "Bánh", "qty": 1, "price": 15000 }
+]</textarea>
+      <label>Tổng tiền (tuỳ chọn, nếu bỏ trống sẽ tự tính)</label>
+      <input id="totalInput" type="number" placeholder="65000" />
+      <div class="row" style="margin-top:8px;">
+        <button id="btnPrintJson">Gửi /print-json</button>
+        <button id="btnClearJson" type="button">Xóa</button>
+      </div>
+      <div class="status mono" id="statusJson"></div>
+    </section>
+  </main>
+  <footer>
+    <span class="mono">Sử dụng API /print và /print-json</span>
+  </footer>
+
+  <!-- Settings modal -->
+  <div id="settingsModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.35); z-index:1200; align-items:center; justify-content:center;">
+    <div style="width:980px; max-width:98%; max-height:92%; overflow:auto; background:#fff; border-radius:8px; padding:16px; box-shadow:0 10px 30px rgba(2,6,23,0.2);">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;">
+        <h2 style="margin:0; font-size:18px;">Cài đặt</h2>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button id="btnCloseSettings" style="background:#ef4444;">Đóng</button>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr 480px; gap:12px;">
+        <div>
+          <h3 style="margin-top:0;">Biến môi trường (.env)</h3>
+
+          <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+            <button id="btnLoadEnv">Tải .env</button>
+            <button id="btnSaveEnv" style="background:#10b981;">Lưu .env</button>
+            <button id="btnAddEnvVar" type="button">+ Thêm biến môi trường mới</button>
+            <span id="envStatus" class="mono" style="margin-left:8px;"></span>
+          </div>
+
+          <div id="envList" style="display:flex; flex-direction:column; gap:8px;">
+            <!-- Rows inserted here -->
+          </div>
+
+          <!-- Template for env row (hidden) -->
+          <div id="envRowTemplate" style="display:none; gap:8px; align-items:center;">
+            <input class="envKey" placeholder="TÊN_BIẾN" style="width:40%; padding:6px; font-family:ui-monospace,monospace;" />
+            <input class="envValue" placeholder="giá trị" style="width:45%; padding:6px; font-family:ui-monospace,monospace;" />
+            <button class="envToggleValue" title="Hiện/ẩn giá trị" type="button">Hiện</button>
+            <button class="envRemove" title="Xóa" type="button" style="background:#ef4444;">Xóa</button>
+          </div>
+        </div>
+
+        <div>
+          <h3 style="margin-top:0;">Preview phiếu trả hàng</h3>
+          <label style="display:block; font-size:13px; color:#444; margin-bottom:6px;">Dữ liệu phiếu (JSON)</label>
+          <textarea id="slipJson" rows="6" style="width:100%; box-sizing:border-box; padding:8px; font-family:ui-monospace,monospace;">{
+  "workshopName": "Xưởng A",
+  "workshopCode": "XA-01",
+  "returnDate": "2026-05-28",
+  "totalValue": 125000,
+  "reason": "Sản phẩm lỗi",
+  "code": "RTX-123",
+  "qrData": "RTX-123"
+}</textarea>
+
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:8px;">
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước chữ - Tiêu đề (px)</label>
+              <input id="sizeTitle" type="number" min="8" max="200" value="28" style="width:100%; padding:6px;" />
+            </div>
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước chữ - Subtitle (px)</label>
+              <input id="sizeSubtitle" type="number" min="8" max="200" value="15" style="width:100%; padding:6px;" />
+            </div>
+
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước chữ - Nội dung (px)</label>
+              <input id="sizeContent" type="number" min="8" max="200" value="22" style="width:100%; padding:6px;" />
+            </div>
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước chữ - Lý do (px)</label>
+              <input id="sizeReason" type="number" min="8" max="200" value="19" style="width:100%; padding:6px;" />
+            </div>
+
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước QR (px)</label>
+              <input id="sizeQr" type="number" min="20" max="800" value="200" style="width:100%; padding:6px;" />
+            </div>
+            <div>
+              <label style="font-size:13px; color:#444;">Tỉ lệ toàn cục preview (%)</label>
+              <input id="fontScale" type="range" min="50" max="200" value="100" style="width:100%" />
+              <div style="font-size:12px; margin-top:4px;">Tỉ lệ: <span id="fontScaleLabel">100%</span></div>
+            </div>
+          </div>
+
+          <div style="display:flex; gap:8px; margin-top:10px;">
+            <button id="btnRenderPreview" style="background:#1f6feb;">Xem trước</button>
+            <button id="btnOpenPreviewWindow" type="button">Mở trong cửa sổ mới</button>
+            <span id="previewStatus" class="mono" style="margin-left:8px;"></span>
+          </div>
+
+          <div style="margin-top:10px; border:1px solid #e5e7eb; border-radius:6px; overflow:hidden; height:360px;">
+            <iframe id="previewIframe" style="width:100%; height:100%; border:0; background:#fff;"></iframe>
+          </div>
+
+          <div style="border-top:1px solid #e5e7eb; margin:16px 0;"></div>
+
+          <h3 style="margin-top:0;">Preview đơn vận chuyển khác</h3>
+          <label style="display:block; font-size:13px; color:#444; margin-bottom:6px;">Dữ liệu đơn vận chuyển (JSON)</label>
+          <textarea id="shipLabelJson" rows="6" style="width:100%; box-sizing:border-box; padding:8px; font-family:ui-monospace,monospace;">{
+  "senderInfo": "Váy cưới Vivu: 0942000300 - Xóm 4, Xã Giao Minh, tỉnh Ninh Bình.",
+  "receiverName": "Nguyễn Văn A",
+  "receiverPhone": "0912345678",
+  "receiverAddress": "123 Đường ABC, Quận 1, TP.HCM",
+  "coachPhone": "0987654321",
+  "orderCode": "VIVU-123"
+}</textarea>
+
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:8px;">
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước chữ - Tiêu đề (px)</label>
+              <input id="shipSizeTitle" type="number" min="8" max="200" value="28" style="width:100%; padding:6px;" />
+            </div>
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước chữ - Subtitle (px)</label>
+              <input id="shipSizeSubtitle" type="number" min="8" max="200" value="15" style="width:100%; padding:6px;" />
+            </div>
+
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước chữ - Nội dung (px)</label>
+              <input id="shipSizeContent" type="number" min="8" max="200" value="22" style="width:100%; padding:6px;" />
+            </div>
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước chữ - Label (px)</label>
+              <input id="shipSizeLabel" type="number" min="8" max="200" value="13" style="width:100%; padding:6px;" />
+            </div>
+
+            <div>
+              <label style="font-size:13px; color:#444;">Kích thước chữ - Mã đơn (px)</label>
+              <input id="shipSizeOrderCode" type="number" min="8" max="200" value="19" style="width:100%; padding:6px;" />
+            </div>
+            <div>
+              <label style="font-size:13px; color:#444;">Tỉ lệ toàn cục preview (%)</label>
+              <input id="shipFontScale" type="range" min="50" max="200" value="100" style="width:100%" />
+              <div style="font-size:12px; margin-top:4px;">Tỉ lệ: <span id="shipFontScaleLabel">100%</span></div>
+            </div>
+          </div>
+
+          <div style="display:flex; gap:8px; margin-top:10px;">
+            <button id="btnRenderShipPreview" style="background:#1f6feb;">Xem trước</button>
+            <button id="btnOpenShipPreviewWindow" type="button">Mở trong cửa sổ mới</button>
+            <span id="shipPreviewStatus" class="mono" style="margin-left:8px;"></span>
+          </div>
+
+          <div style="margin-top:10px; border:1px solid #e5e7eb; border-radius:6px; overflow:hidden; height:360px;">
+            <iframe id="shipPreviewIframe" style="width:100%; height:100%; border:0; background:#fff;"></iframe>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

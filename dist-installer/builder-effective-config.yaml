@@ -1,0 +1,39 @@
+directories:
+  output: dist-installer
+  buildResources: build
+appId: com.vivu.printer
+productName: VIVU Printer
+copyright: Copyright © 2026 VIVU
+asar: true
+files:
+  - filter:
+      - main.js
+      - server.js
+      - returnSlipPrint.js
+      - otherCarrierShipPrint.js
+      - public/**/*
+      - node_modules/**/*
+      - '!node_modules/electron/**/*'
+      - '!node_modules/electron-builder/**/*'
+      - '!node_modules/@electron/packager/**/*'
+      - '!node_modules/pkg/**/*'
+asarUnpack:
+  - server.js
+  - returnSlipPrint.js
+  - otherCarrierShipPrint.js
+  - public/**/*
+  - node_modules/**/*
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: public/icon.png
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: VIVU Printer
+  runAfterFinish: true
+electronVersion: 42.3.0

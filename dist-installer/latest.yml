@@ -1,0 +1,8 @@
+version: 1.0.0
+files:
+  - url: VIVU-Printer-Setup-1.0.0.exe
+    sha512: q5n6MFeLakgfVHh5+satp5RCmCFl/Do3J4QYiocyvNbtemJGSIq+DCgkSFeYi2cAR2YfBdiYhJwSThNl+qKQhg==
+    size: 102425770
+path: VIVU-Printer-Setup-1.0.0.exe
+sha512: q5n6MFeLakgfVHh5+satp5RCmCFl/Do3J4QYiocyvNbtemJGSIq+DCgkSFeYi2cAR2YfBdiYhJwSThNl+qKQhg==
+releaseDate: '2026-05-31T15:54:48.811Z'
