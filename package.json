@@ -85,7 +85,8 @@
       {
         "provider": "github",
         "owner": "khoatrandang32",
-        "repo": "vivu_printer"
+        "repo": "vivu_printer",
+        "releaseType": "release"
       }
     ],
     "win": {
