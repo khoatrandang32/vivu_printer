@@ -1,6 +1,10 @@
 // NodeJS Print Server cho HPRT N43 (TSPL) trên Windows
 // Yêu cầu: CommonJS, Express, không dùng native module phức tạp, gửi RAW qua lệnh Windows (print/copy)
 
+if (process.env.BASE_NODE_MODULES && !module.paths.includes(process.env.BASE_NODE_MODULES)) {
+  module.paths.push(process.env.BASE_NODE_MODULES);
+}
+
 const fs = require('fs');
 const path = require('path');
 const os = require('os');

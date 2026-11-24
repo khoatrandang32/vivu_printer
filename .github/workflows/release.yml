@@ -30,3 +30,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win --x64 --publish always
+
+      - name: Create & Upload Hot Update Bundle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          Compress-Archive -Path server.js,configManager.js,mdnsService.js,returnSlipPrint.js,otherCarrierShipPrint.js,ghtkLabelStamper.js,public,package.json,main.js -DestinationPath bundle.zip -Force
+          $tag = if ($env:GITHUB_REF_NAME -match '^v') { $env:GITHUB_REF_NAME } else { "v" + (Get-Content package.json | ConvertFrom-Json).version }
+          gh release upload $tag bundle.zip --clobber

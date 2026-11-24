@@ -643,6 +643,7 @@ function bindEvents() {
       if (document.getElementById('cfgGhtkToken')) document.getElementById('cfgGhtkToken').value = cfg.ghtkApiToken || '';
       if (document.getElementById('cfgGhtkSource')) document.getElementById('cfgGhtkSource').value = cfg.ghtkClientSource || '';
       if (document.getElementById('cfgCurrentVersion')) document.getElementById('cfgCurrentVersion').textContent = cfg.version || '1.0.1';
+      if (document.getElementById('appVersionBadge')) document.getElementById('appVersionBadge').textContent = 'v' + (cfg.version || '1.0.1');
 
       const accounts = Array.isArray(cfg.ghtkAccounts) ? cfg.ghtkAccounts : [];
       const accountsInfoEl = document.getElementById('cfgGhtkAccountsInfo');
