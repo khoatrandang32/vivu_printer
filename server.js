@@ -331,15 +331,28 @@ function savePdfToDir(buffer, baseName) {
 function buildSumatraPrintSettings() {
   const currentCfg = configManager.get();
   const parts = [];
-  const w = Math.max(10, Math.min(300, currentCfg.labelWidthMm || 100));
-  const h = Math.max(10, Math.min(300, currentCfg.labelHeightMm || 150));
-  parts.push(`paper=${w}x${h}mm`);
+
   const orient = (currentCfg.printOrientation || 'portrait').toLowerCase();
-  if (orient === 'landscape' || orient === 'portrait') {
-    parts.push(orient);
+  if (orient === 'landscape') {
+    parts.push('landscape');
+  } else if (orient === 'rotate90') {
+    parts.push('rotate=90');
+  } else if (orient === 'rotate180') {
+    parts.push('rotate=180');
+  } else if (orient === 'rotate270') {
+    parts.push('rotate=270');
+  } else {
+    parts.push('portrait');
   }
+
+  // Luôn vô hiệu hóa auto-rotation để SumatraPDF không tự ý xoay ngang tem máy in nhiệt
+  parts.push('disable-auto-rotation');
+  parts.push('ignore-pdf-print-settings');
+
   const paddingMm = currentCfg.printPaddingMm || 0;
   if (paddingMm > 0) {
+    const w = Math.max(10, Math.min(300, currentCfg.labelWidthMm || 100));
+    const h = Math.max(10, Math.min(300, currentCfg.labelHeightMm || 150));
     const pad = Math.max(0, Math.min(50, paddingMm));
     const availW = Math.max(1, w - 2 * pad);
     const availH = Math.max(1, h - 2 * pad);
