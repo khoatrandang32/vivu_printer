@@ -4,35 +4,9 @@ const { app, BrowserWindow, Tray, Menu, nativeImage, shell, dialog } = require('
 const path = require('path');
 const { fork, spawn } = require('child_process');
 const http = require('http');
+const configManager = require('./configManager');
 
-// Đọc PORT từ .env thủ công (dotenv chưa load ở main process)
-function readEnvPort() {
-  try {
-    const fs = require('fs');
-    // Ưu tiên thư mục chứa file thực thi (đối với bản build)
-    // Ưu tiên thư mục chứa file thực thi (đối với bản build)
-    let envPath = path.join(path.dirname(process.execPath), '.env');
-    // Nếu không tìm thấy, thử trong thư mục resources (nơi extraResources được đặt)
-    if (!fs.existsSync(envPath) && app.isPackaged) {
-      envPath = path.join(process.resourcesPath, '.env');
-    }
-    // Nếu vẫn không tìm thấy, thử trong thư mục làm việc hiện tại (đối với dev)
-    if (!fs.existsSync(envPath)) {
-      envPath = path.join(process.cwd(), '.env');
-    }
-    if (!fs.existsSync(envPath)) {
-      console.warn('[ELECTRON] Không tìm thấy file .env, sử dụng cổng mặc định 3000.');
-      return 3000;
-    }
-    const content = fs.readFileSync(envPath, 'utf8');
-    const match = content.match(/^PORT\s*=\s*(\d+)/m);
-    return match ? parseInt(match[1], 10) : 3000;
-  } catch {
-    return 3000;
-  }
-}
-
-const PORT = readEnvPort();
+const PORT = parseInt(configManager.get('port') || 3232, 10);
 const APP_URL = `http://localhost:${PORT}`;
 const START_MINIMIZED = process.argv.includes('--hidden') || process.env.START_MINIMIZED === 'true';
 
@@ -40,6 +14,79 @@ let mainWindow = null;
 let tray = null;
 let serverProcess = null;
 let serverReady = false;
+let autoUpdater = null;
+
+function sendToUpdater(status, data = {}) {
+  const payload = { status, ...data };
+  if (serverProcess) {
+    try {
+      serverProcess.send({ type: 'updater-event', payload });
+    } catch {}
+  }
+}
+
+function initAutoUpdater() {
+  if (autoUpdater) return autoUpdater;
+  try {
+    const updaterModule = require('electron-updater');
+    autoUpdater = updaterModule.autoUpdater;
+    if (autoUpdater) {
+      autoUpdater.autoDownload = false;
+      autoUpdater.autoInstallOnAppQuit = true;
+
+      autoUpdater.on('checking-for-update', () => {
+        console.log('[UPDATER] Đang kiểm tra bản cập nhật...');
+        sendToUpdater('checking', { message: 'Đang kiểm tra bản cập nhật...' });
+      });
+
+      autoUpdater.on('update-available', (info) => {
+        console.log(`[UPDATER] Đã có phiên bản mới: v${info.version}`);
+        sendToUpdater('available', {
+          version: info.version,
+          releaseDate: info.releaseDate,
+          releaseNotes: info.releaseNotes,
+          message: `Đã có bản cập nhật mới v${info.version}!`
+        });
+      });
+
+      autoUpdater.on('update-not-available', (info) => {
+        console.log('[UPDATER] Bạn đang dùng phiên bản mới nhất.');
+        sendToUpdater('not-available', {
+          version: info && info.version,
+          message: 'Bạn đang sử dụng phiên bản mới nhất.'
+        });
+      });
+
+      autoUpdater.on('download-progress', (progressObj) => {
+        const percent = Math.round(progressObj.percent || 0);
+        console.log(`[UPDATER] Tiến độ tải: ${percent}%`);
+        sendToUpdater('downloading', {
+          percent,
+          bytesPerSecond: progressObj.bytesPerSecond,
+          transferred: progressObj.transferred,
+          total: progressObj.total,
+          message: `Đang tải: ${percent}%`
+        });
+      });
+
+      autoUpdater.on('update-downloaded', (info) => {
+        console.log(`[UPDATER] Tải bản cập nhật thành công v${info.version}`);
+        sendToUpdater('downloaded', {
+          version: info.version,
+          message: `Bản cập nhật v${info.version} đã sẵn sàng. Bấm để khởi động lại và cập nhật!`
+        });
+      });
+
+      autoUpdater.on('error', (err) => {
+        console.error('[UPDATER] Lỗi cập nhật:', err.message);
+        sendToUpdater('error', { message: err.message });
+      });
+    }
+  } catch (e) {
+    console.warn('[UPDATER] Không thể khởi tạo autoUpdater:', e.message);
+  }
+  return autoUpdater;
+}
 
 //
 // Windows: set AppUserModelId for proper shortcuts/notifications
@@ -91,30 +138,74 @@ function startServer() {
   const serverPath = path.join(appDir, 'server.js');
   console.log(`[ELECTRON] Khởi động server từ: ${serverPath}, cwd: ${appDir}`);
 
+  let serverStderr = '';
+  let serverExitError = null;
+
   serverProcess = fork(serverPath, [], {
     cwd: appDir,
-    env: { ...process.env },
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      PORT: String(PORT)
+    },
     silent: true,
   });
 
   if (serverProcess.stdout) serverProcess.stdout.on('data', (data) => console.log(`[SERVER OUT] ${data}`));
-  if (serverProcess.stderr) serverProcess.stderr.on('data', (data) => console.error(`[SERVER ERR] ${data}`));
+  if (serverProcess.stderr) {
+    serverProcess.stderr.on('data', (data) => {
+      serverStderr += data.toString();
+      console.error(`[SERVER ERR] ${data}`);
+    });
+  }
+
+  serverProcess.on('message', (msg) => {
+    if (!msg) return;
+    const updater = initAutoUpdater();
+    if (msg.action === 'check-update') {
+      if (!updater || !app.isPackaged) {
+        sendToUpdater('not-available', { message: 'Chế độ Dev: Chưa đóng gói installer nên không chạy autoUpdater.' });
+      } else {
+        updater.checkForUpdates().catch((err) => {
+          sendToUpdater('error', { message: err.message });
+        });
+      }
+    } else if (msg.action === 'download-update') {
+      if (updater) {
+        updater.downloadUpdate().catch((err) => {
+          sendToUpdater('error', { message: err.message });
+        });
+      }
+    } else if (msg.action === 'install-update') {
+      if (updater) {
+        updater.quitAndInstall(false, true);
+      }
+    }
+  });
 
   serverProcess.on('error', (err) => {
     console.error('[ELECTRON] Server process lỗi:', err.message);
+    serverExitError = err.message;
   });
 
   serverProcess.on('exit', (code) => {
     console.log(`[ELECTRON] Server process thoát với code ${code}`);
     serverReady = false;
+    if (code !== 0 && code !== null) {
+      serverExitError = `Server process thoát (mã ${code}).\n${serverStderr.trim() || 'Không có log lỗi'}`;
+    }
   });
 }
 
 // Chờ server sẵn sàng bằng cách poll HTTP
-function waitForServer(retries = 30, delayMs = 500) {
+function waitForServer(retries = 40, delayMs = 500) {
   return new Promise((resolve, reject) => {
     let attempts = 0;
     const check = () => {
+      if (!serverProcess || serverProcess.killed || serverProcess.exitCode !== null) {
+        const detail = serverStderr ? `\n\nChi tiết lỗi từ server:\n${serverStderr.trim()}` : '';
+        return reject(new Error(`Server process đã dừng hoạt động.${detail}`));
+      }
       http.get(`${APP_URL}/config`, (res) => {
         if (res.statusCode === 200) {
           serverReady = true;
@@ -127,7 +218,10 @@ function waitForServer(retries = 30, delayMs = 500) {
     };
     const retry = () => {
       attempts++;
-      if (attempts >= retries) return reject(new Error('Server không khởi động được'));
+      if (attempts >= retries) {
+        const detail = serverStderr ? `\n\nChi tiết lỗi từ server:\n${serverStderr.trim()}` : '';
+        return reject(new Error(`Server không phản hồi sau ${Math.round(retries * delayMs / 1000)}s.${detail}`));
+      }
       setTimeout(check, delayMs);
     };
     check();
@@ -235,6 +329,23 @@ function createTray() {
             openAtLogin,
             path: process.execPath,
             args: openAtLogin ? ['--hidden'] : []
+          });
+        }
+      },
+    },
+    {
+      label: 'Kiểm tra bản cập nhật',
+      click: () => {
+        const updater = initAutoUpdater();
+        if (!updater || !app.isPackaged) {
+          dialog.showMessageBox({
+            type: 'info',
+            title: 'Cập nhật',
+            message: 'Ứng dụng đang chạy ở chế độ phát triển (Dev). Tính năng tự động cập nhật hoạt động trên bản cài đặt đóng gói.'
+          });
+        } else {
+          updater.checkForUpdates().catch((err) => {
+            dialog.showErrorBox('Lỗi cập nhật', err.message);
           });
         }
       },

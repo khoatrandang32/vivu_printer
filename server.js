@@ -10,40 +10,32 @@ const crypto = require('crypto');
 const dgram = require('dgram');
 const { io } = require('socket.io-client');
 const express = require('express');
+const puppeteer = require('puppeteer-core');
 
-// Ưu tiên load .env từ thư mục chứa server.js hoặc thư mục thực thi
-let envPath = path.join(__dirname, '.env');
-if (!fs.existsSync(envPath)) {
-  envPath = path.join(path.dirname(process.execPath), '.env');
-}
-if (fs.existsSync(envPath)) {
-  require('dotenv').config({ path: envPath });
-} else {
-  require('dotenv').config();
-}
+const configManager = require('./configManager');
+const { startMdns, stopMdns } = require('./mdnsService');
 const { printReturnToWorkshopSlip, buildReturnToWorkshopSlipHtml } = require('./returnSlipPrint');
 const { printOtherCarrierShip, buildOtherCarrierShipHtml } = require('./otherCarrierShipPrint');
+const { stampGhtkLabelPdf } = require('./ghtkLabelStamper');
 
-// Cấu hình
-const PORT = parseInt(process.env.PORT || '3000', 10);
-const PRINTER_NAME = process.env.PRINTER_NAME || 'HPRT N43';
-let CURRENT_PRINTER = PRINTER_NAME;
-const PDF_VIEWER_PATH = process.env.PDF_VIEWER_PATH || '';
-const SAVE_PDF_DIR = process.env.SAVE_PDF_DIR || '';
-const LABEL_WIDTH_MM = parseInt(process.env.LABEL_WIDTH_MM || '100', 10);
-const LABEL_HEIGHT_MM = parseInt(process.env.LABEL_HEIGHT_MM || '150', 10);
-const PRINT_FIT = (process.env.PRINT_FIT || 'fit').toLowerCase(); // fit | noscale | shrink
-const PRINT_ORIENTATION = (process.env.PRINT_ORIENTATION || 'portrait').toLowerCase(); // portrait | landscape
-const PRINT_PADDING_MM = parseInt(process.env.PRINT_PADDING_MM || '0', 10);
-const DISCOVERY_ENABLE = String(process.env.DISCOVERY_ENABLE || '1') !== '0';
-const DISCOVERY_PORT = parseInt(process.env.DISCOVERY_PORT || '4210', 10);
-const DISCOVERY_ADDR = process.env.DISCOVERY_ADDR || '255.255.255.255';
-const DISCOVERY_INTERVAL_MS = parseInt(process.env.DISCOVERY_INTERVAL_MS || '2000', 10);
+// Cấu hình từ configManager (ưu tiên) hoặc process.env
+const cfg = configManager.get();
+let PORT = parseInt(cfg.port || process.env.PORT || '3232', 10);
+let CURRENT_PRINTER = cfg.printerName || process.env.PRINTER_NAME || 'HPRT N43';
 const STARTUP_TASK_NAME = process.env.STARTUP_TASK_NAME || 'VivuPrinter';
-const SOCKET_SERVER_URL = String(process.env.BACKEND_SOCKET_URL || process.env.WS_SERVER_URL || '').trim();
-const SOCKET_AUTH_TOKEN = String(process.env.BACKEND_SOCKET_TOKEN || process.env.WS_AUTH_TOKEN || '').trim();
-const SOCKET_DEVICE_ID = String(process.env.BACKEND_SOCKET_DEVICE_ID || process.env.WS_DEVICE_ID || '').trim();
-const SOCKET_RECONNECT_MS = parseInt(process.env.BACKEND_SOCKET_RECONNECT_MS || process.env.WS_RECONNECT_MS || '1000', 10);
+
+function getSocketServerUrl() {
+  return String(configManager.get('backendSocketUrl') || process.env.BACKEND_SOCKET_URL || process.env.WS_SERVER_URL || '').trim();
+}
+function getSocketAuthToken() {
+  return String(configManager.get('backendSocketToken') || process.env.BACKEND_SOCKET_TOKEN || process.env.WS_AUTH_TOKEN || '').trim();
+}
+function getSocketDeviceId() {
+  return String(configManager.get('backendSocketDeviceId') || process.env.BACKEND_SOCKET_DEVICE_ID || process.env.WS_DEVICE_ID || '').trim() || getLocalIPv4();
+}
+function getSocketReconnectMs() {
+  return parseInt(configManager.get('backendSocketReconnectMs') || process.env.BACKEND_SOCKET_RECONNECT_MS || process.env.WS_RECONNECT_MS || '1000', 10);
+}
 
 // Hàng đợi in đơn giản để tránh in trùng và đảm bảo xử lý tuần tự
 const printQueue = [];
@@ -55,6 +47,7 @@ let socketClient = null;
 let socketConnectedAt = 0;
 let socketLastMessageAt = 0;
 let socketLastError = '';
+let syncedGhtkAccounts = Array.isArray(configManager.get('ghtkAccounts')) ? configManager.get('ghtkAccounts') : [];
 
 // Express app
 const app = express();
@@ -145,6 +138,8 @@ app.post('/settings/preview-return-slip', express.json(), async (req, res) => {
     const sizeContent = Number(req.body && Number.isFinite(Number(req.body.sizeContent)) ? Number(req.body.sizeContent) : 22);
     const sizeReason = Number(req.body && Number.isFinite(Number(req.body.sizeReason)) ? Number(req.body.sizeReason) : 19);
     const sizeQr = Number(req.body && Number.isFinite(Number(req.body.sizeQr)) ? Number(req.body.sizeQr) : 200);
+    const paddingLeft = req.body && Number.isFinite(Number(req.body.paddingLeft)) ? Number(req.body.paddingLeft) : (process.env.RETURN_SLIP_PADDING_LEFT ? Number(process.env.RETURN_SLIP_PADDING_LEFT) : 70);
+    const paddingRight = req.body && Number.isFinite(Number(req.body.paddingRight)) ? Number(req.body.paddingRight) : (process.env.RETURN_SLIP_PADDING_RIGHT ? Number(process.env.RETURN_SLIP_PADDING_RIGHT) : 150);
 
     // basic clamps to avoid crazy values
     const clamp = (v, min, max) => Math.max(min, Math.min(max, Math.round(Number(v) || 0)));
@@ -154,6 +149,8 @@ app.post('/settings/preview-return-slip', express.json(), async (req, res) => {
     const sContent = clamp(sizeContent, 8, 200);
     const sReason = clamp(sizeReason, 8, 200);
     const sQr = clamp(sizeQr, 20, 1600);
+    const sPaddingLeft = clamp(paddingLeft, 0, 500);
+    const sPaddingRight = clamp(paddingRight, 0, 500);
 
     // Pass explicit size options into the template generator so sizes are applied directly
     const opts = {
@@ -161,7 +158,9 @@ app.post('/settings/preview-return-slip', express.json(), async (req, res) => {
       sizeSubtitle: sSubtitle,
       sizeContent: sContent,
       sizeReason: sReason,
-      sizeQr: sQr
+      sizeQr: sQr,
+      paddingLeft: sPaddingLeft,
+      paddingRight: sPaddingRight,
     };
 
     let html = await buildReturnToWorkshopSlipHtml(slip, opts);
@@ -285,15 +284,18 @@ function savePdfToDir(buffer, baseName) {
 }
 
 function buildSumatraPrintSettings() {
+  const currentCfg = configManager.get();
   const parts = [];
-  const w = Math.max(10, Math.min(300, LABEL_WIDTH_MM || 100));
-  const h = Math.max(10, Math.min(300, LABEL_HEIGHT_MM || 150));
+  const w = Math.max(10, Math.min(300, currentCfg.labelWidthMm || 100));
+  const h = Math.max(10, Math.min(300, currentCfg.labelHeightMm || 150));
   parts.push(`paper=${w}x${h}mm`);
-  if (PRINT_ORIENTATION === 'landscape' || PRINT_ORIENTATION === 'portrait') {
-    parts.push(PRINT_ORIENTATION);
+  const orient = (currentCfg.printOrientation || 'portrait').toLowerCase();
+  if (orient === 'landscape' || orient === 'portrait') {
+    parts.push(orient);
   }
-  if (PRINT_PADDING_MM > 0) {
-    const pad = Math.max(0, Math.min(50, PRINT_PADDING_MM));
+  const paddingMm = currentCfg.printPaddingMm || 0;
+  if (paddingMm > 0) {
+    const pad = Math.max(0, Math.min(50, paddingMm));
     const availW = Math.max(1, w - 2 * pad);
     const availH = Math.max(1, h - 2 * pad);
     const sx = availW / w;
@@ -302,8 +304,9 @@ function buildSumatraPrintSettings() {
     parts.push('center');
     parts.push(`scale=${scalePercent}`);
   } else {
-    if (['fit', 'noscale', 'shrink'].includes(PRINT_FIT)) {
-      parts.push(PRINT_FIT);
+    const fit = (currentCfg.printFit || 'fit').toLowerCase();
+    if (['fit', 'noscale', 'shrink'].includes(fit)) {
+      parts.push(fit);
     } else {
       parts.push('fit');
     }
@@ -323,14 +326,16 @@ function getLocalIPv4() {
 }
 
 function getSocketDeviceId() {
-  if (SOCKET_DEVICE_ID) return SOCKET_DEVICE_ID;
+  const customId = String(configManager.get('backendSocketDeviceId') || process.env.BACKEND_SOCKET_DEVICE_ID || process.env.WS_DEVICE_ID || '').trim();
+  if (customId) return customId;
   return `${os.hostname()}-${PORT}`.replace(/[^a-zA-Z0-9._-]+/g, '_');
 }
 
 function getSocketStatus() {
+  const url = getSocketServerUrl();
   return {
-    enabled: !!SOCKET_SERVER_URL,
-    url: SOCKET_SERVER_URL || null,
+    enabled: !!url,
+    url: url || null,
     deviceId: getSocketDeviceId(),
     connected: !!(socketClient && socketClient.connected),
     connectedAt: socketConnectedAt || null,
@@ -352,25 +357,49 @@ function emitSocketEvent(eventName, payload) {
   }
 }
 
-function normalizeTrackingOrders(input) {
-  let list = [];
+function normalizeGhtkPrintJobs(input) {
+  let rawList = [];
   if (Array.isArray(input)) {
-    list = input;
+    rawList = input;
   } else if (typeof input === 'string') {
-    list = input.split(/[\n,]+/);
+    rawList = input.split(/[\n,]+/);
   } else if (input && typeof input === 'object') {
-    if (Array.isArray(input.tracking_orders)) list = input.tracking_orders;
-    else if (Array.isArray(input.trackingOrders)) list = input.trackingOrders;
-    else if (Array.isArray(input.orders)) list = input.orders;
-    else if (typeof input.tracking_order === 'string') list = [input.tracking_order];
-    else if (typeof input.trackingOrder === 'string') list = [input.trackingOrder];
-    else if (typeof input.order_code === 'string') list = [input.order_code];
-    else if (typeof input.orderCode === 'string') list = [input.orderCode];
-    else if (typeof input.code === 'string') list = [input.code];
-    else if (typeof input.message === 'string') list = input.message.split(/[\n,]+/);
-    else if (input.data) return normalizeTrackingOrders(input.data);
+    if (Array.isArray(input.orders)) rawList = input.orders;
+    else if (Array.isArray(input.tracking_orders)) rawList = input.tracking_orders;
+    else if (Array.isArray(input.trackingOrders)) rawList = input.trackingOrders;
+    else if (typeof input.tracking_order === 'string') rawList = [input.tracking_order];
+    else if (typeof input.trackingOrder === 'string') rawList = [input.trackingOrder];
+    else if (typeof input.order_code === 'string') rawList = [input.order_code];
+    else if (typeof input.orderCode === 'string') rawList = [input.orderCode];
+    else if (typeof input.code === 'string') rawList = [input.code];
+    else if (typeof input.message === 'string') rawList = input.message.split(/[\n,]+/);
+    else if (input.data) return normalizeGhtkPrintJobs(input.data);
   }
-  return list.map((value) => String(value || '').trim()).filter(Boolean);
+
+  const jobs = [];
+  for (const item of rawList) {
+    if (!item) continue;
+    if (typeof item === 'string') {
+      const code = item.trim();
+      if (code) jobs.push({ tracking: code });
+    } else if (typeof item === 'object') {
+      const code = String(item.tracking || item.trackingOrder || item.tracking_order || item.orderCode || item.code || '').trim();
+      if (code) {
+        jobs.push({
+          tracking: code,
+          orderCode: item.orderCode ? String(item.orderCode).trim() : undefined,
+          accountName: item.accountName ? String(item.accountName).trim() : undefined,
+          token: item.token ? String(item.token).trim() : undefined,
+          partnerCode: item.partnerCode ? String(item.partnerCode).trim() : undefined,
+        });
+      }
+    }
+  }
+  return jobs;
+}
+
+function normalizeTrackingOrders(input) {
+  return normalizeGhtkPrintJobs(input).map((j) => j.tracking);
 }
 
 function buildSocketHelloPayload() {
@@ -470,6 +499,16 @@ async function handleGatewayCommand(payload) {
       ts: Date.now(),
     });
     try {
+      const opts = {
+        sizeQr: payload.sizeQr || slip.sizeQr,
+        sizeTitle: payload.sizeTitle || slip.sizeTitle,
+        sizeSubtitle: payload.sizeSubtitle || slip.sizeSubtitle,
+        sizeContent: payload.sizeContent || slip.sizeContent,
+        sizeReason: payload.sizeReason || slip.sizeReason,
+        paddingLeft: payload.paddingLeft ?? slip.paddingLeft ?? (process.env.RETURN_SLIP_PADDING_LEFT ? Number(process.env.RETURN_SLIP_PADDING_LEFT) : undefined),
+        paddingRight: payload.paddingRight ?? slip.paddingRight ?? (process.env.RETURN_SLIP_PADDING_RIGHT ? Number(process.env.RETURN_SLIP_PADDING_RIGHT) : undefined),
+      };
+      Object.keys(opts).forEach(k => { if (opts[k] == null) delete opts[k]; });
       const result = await printReturnToWorkshopSlip(slip, {
         renderDocumentToPdf: (docPath) => {
           const fileUrl = 'file:///' + String(docPath).replace(/\\/g, '/');
@@ -477,7 +516,7 @@ async function handleGatewayCommand(payload) {
         },
         sendToPrinterPdf,
         printerName: CURRENT_PRINTER,
-      });
+      }, opts);
       emitSocketEvent('gateway_command_result', {
         type: 'rtx_slip_print_result',
         requestId,
@@ -549,17 +588,21 @@ async function handleGatewayCommand(payload) {
   }
 
   // ── Xử lý lệnh in GHTK (tracking orders) ──
-  const trackingOrders = normalizeTrackingOrders(payload);
-  const canPrint = trackingOrders.length > 0 && (!messageType || ['print_ghtk_label', 'ghtk_print', 'print_label', 'print'].includes(messageType));
+  const ghtkJobs = normalizeGhtkPrintJobs(payload);
+  const canPrint = ghtkJobs.length > 0 && (!messageType || ['print_ghtk_label', 'ghtk_print', 'print_label', 'print'].includes(messageType));
   if (!canPrint) {
     console.log(`[SOCKET] ✘ Bỏ qua gateway_command không hỗ trợ (type="${messageType}"): ${JSON.stringify(payload).slice(0, 300)}`);
     return;
   }
+  const trackingOrders = ghtkJobs.map((j) => j.tracking);
   const requestId = payload && typeof payload === 'object'
     ? String(payload.requestId || payload.request_id || payload.id || crypto.randomUUID())
     : crypto.randomUUID();
-  console.log(`[SOCKET][GHTK] ▶ Bắt đầu in ${trackingOrders.length} mã GHTK | requestId=${requestId}`);
-  trackingOrders.forEach((code, i) => console.log(`[SOCKET][GHTK]   [${i + 1}/${trackingOrders.length}] ${code}`));
+  console.log(`[SOCKET][GHTK] ▶ Bắt đầu in ${ghtkJobs.length} mã GHTK | requestId=${requestId}`);
+  ghtkJobs.forEach((job, i) => {
+    const extra = job.accountName ? ` [TK: ${job.accountName}]` : '';
+    console.log(`[SOCKET][GHTK]   [${i + 1}/${ghtkJobs.length}] ${job.tracking}${extra}`);
+  });
   emitSocketEvent('gateway_command_ack', {
     type: 'print_ack',
     requestId,
@@ -569,7 +612,7 @@ async function handleGatewayCommand(payload) {
     ts: Date.now()
   });
   try {
-    const results = await printGhtkLabels(trackingOrders, `ws:${requestId}`);
+    const results = await printGhtkLabels(ghtkJobs, `ws:${requestId}`);
     const ok = results.filter(r => r.status === 'success').length;
     const fail = results.filter(r => r.status === 'error').length;
     console.log(`[SOCKET][GHTK] ✔ Hoàn thành requestId=${requestId} | Thành công: ${ok}, Lỗi: ${fail}`);
@@ -601,25 +644,28 @@ async function handleGatewayCommand(payload) {
 }
 
 function connectSocketIo() {
-  if (!SOCKET_SERVER_URL) return;
+  const serverUrl = getSocketServerUrl();
+  if (!serverUrl) return;
   if (socketClient) return;
-  console.log(`[SOCKET] Đang kết nối tới ${SOCKET_SERVER_URL}`);
-  socketClient = io(SOCKET_SERVER_URL, {
+  console.log(`[SOCKET] Đang kết nối tới ${serverUrl}`);
+  const authToken = getSocketAuthToken();
+  const deviceId = getSocketDeviceId();
+  socketClient = io(serverUrl, {
     transports: ['websocket'],
     reconnection: true,
     reconnectionAttempts: Infinity,
-    reconnectionDelay: Math.max(1000, SOCKET_RECONNECT_MS),
+    reconnectionDelay: Math.max(1000, getSocketReconnectMs()),
     timeout: 20000,
     auth: {
-      token: SOCKET_AUTH_TOKEN || undefined,
-      deviceId: getSocketDeviceId()
+      token: authToken || undefined,
+      deviceId: deviceId
     },
     extraHeaders: {
-      'x-device-id': getSocketDeviceId(),
-      Authorization: SOCKET_AUTH_TOKEN ? `Bearer ${SOCKET_AUTH_TOKEN}` : ''
+      'x-device-id': deviceId,
+      Authorization: authToken ? `Bearer ${authToken}` : ''
     },
     query: {
-      deviceId: getSocketDeviceId()
+      deviceId: deviceId
     }
   });
   socketClient.on('connect', () => {
@@ -652,35 +698,63 @@ function connectSocketIo() {
       console.error('[SOCKET][VTP] Lỗi xử lý viettelpost_print:', socketLastError);
     });
   });
+  // Lắng nghe đồng bộ danh sách tài khoản GHTK từ backend
+  socketClient.on('gateway_accounts_sync', (payload) => {
+    if (payload && Array.isArray(payload.accounts)) {
+      syncedGhtkAccounts = payload.accounts;
+      try {
+        configManager.save({ ghtkAccounts: syncedGhtkAccounts });
+      } catch (_) {}
+      const names = syncedGhtkAccounts.map((a) => a.name).join(', ');
+      console.log(`[SOCKET][GHTK] Đã đồng bộ ${syncedGhtkAccounts.length} tài khoản GHTK từ server: ${names || '(trống)'}`);
+    }
+  });
+
   socketClient.on('ping', () => {
     socketLastMessageAt = Date.now();
     console.log('[SOCKET] ← Nhận ping từ server');
   });
 }
 
+function reconnectSocketIo() {
+  if (socketClient) {
+    try {
+      socketClient.disconnect();
+      socketClient.removeAllListeners();
+    } catch {}
+    socketClient = null;
+  }
+  startSocketClient();
+}
+
 function startSocketClient() {
-  if (!SOCKET_SERVER_URL) {
-    console.log('[SOCKET] Chưa cấu hình BACKEND_SOCKET_URL, bỏ qua kết nối backend');
+  const serverUrl = getSocketServerUrl();
+  if (!serverUrl) {
+    console.log('[SOCKET] Chưa cấu hình backendSocketUrl, bỏ qua kết nối backend');
     return;
   }
   connectSocketIo();
 }
 
 function startUdpBroadcast() {
-  if (!DISCOVERY_ENABLE) return;
+  const currentCfg = configManager.get();
+  if (!currentCfg.discoveryEnable) return;
   const sock = dgram.createSocket('udp4');
   sock.bind(0, '0.0.0.0', () => {
     try { sock.setBroadcast(true); } catch {}
     setInterval(() => {
+      const cfg = configManager.get();
+      if (!cfg.discoveryEnable) return;
       const payload = {
         ip: getLocalIPv4(),
-        port: PORT,
+        port: cfg.port || PORT,
         printerName: CURRENT_PRINTER,
+        mdnsName: cfg.mdnsName || 'vivu-printer',
         ts: Date.now()
       };
       const buf = Buffer.from(JSON.stringify(payload));
-      try { sock.send(buf, 0, buf.length, DISCOVERY_PORT, DISCOVERY_ADDR); } catch {}
-    }, Math.max(500, DISCOVERY_INTERVAL_MS));
+      try { sock.send(buf, 0, buf.length, cfg.discoveryPort || 4210, cfg.discoveryAddr || '255.255.255.255'); } catch {}
+    }, Math.max(500, currentCfg.discoveryIntervalMs || 2000));
   });
 }
 
@@ -916,36 +990,58 @@ async function sendToPrinterPdf(filePath, printerName, options) {
   const quotedFile = `"${normalizedPath}"`;
   const quotedPrinter = `"${name}"`;
 
-  if (PDF_VIEWER_PATH && fs.existsSync(PDF_VIEWER_PATH)) {
-    const viewer = `"${PDF_VIEWER_PATH}"`;
+  // Tự động tìm SumatraPDF nếu chưa có hoặc kiểm tra path hiện tại
+  let viewerPath = configManager.get('pdfViewerPath');
+  if (!viewerPath || !fs.existsSync(viewerPath)) {
+    const auto = configManager.detectPdfViewer();
+    if (auto.found) {
+      viewerPath = auto.path;
+      configManager.save({ pdfViewerPath: viewerPath });
+    }
+  }
+
+  if (viewerPath && fs.existsSync(viewerPath)) {
+    const viewer = `"${viewerPath}"`;
     try {
-      if (/sumatra/i.test(PDF_VIEWER_PATH)) {
+      if (/sumatra/i.test(viewerPath)) {
         let settings;
         if (paperSize === 'a5') {
-          const orient = 'portrait';
-          settings = `paper=148x210mm, ${orient}, fit`;
+          settings = `paper=148x210mm, portrait, fit, center`;
         } else if (paperSize === 'a4') {
-          settings = `paper=210x297mm, portrait, fit`;
+          settings = `paper=210x297mm, portrait, fit, center`;
         } else {
           settings = buildSumatraPrintSettings();
         }
         // -exit-when-done đảm bảo SumatraPDF thoát sau khi in xong (blocking)
         const cmd = `${viewer} -print-to ${quotedPrinter} -print-settings "${settings}" -silent -exit-when-done ${quotedFile}`;
         console.log(`[PDF] SumatraPDF cmd: ${cmd}`);
-        const out = await tryExec(cmd);
+        let out;
+        try {
+          out = await tryExec(cmd);
+        } catch (e) {
+          // SumatraPDF ghi debug ParseFlags ra stderr dù thành công hay thất bại
+          const msg = String(e.message || '');
+          const cleanMsg = msg.split('\n').filter(l => !/^ParseFlags:/i.test(l.trim())).join('\n').trim();
+          if (!cleanMsg) {
+            // Chỉ có ParseFlags debug, coi như thành công
+            out = { stdout: '', stderr: msg };
+          } else {
+            throw new Error(cleanMsg);
+          }
+        }
         console.log(`[PDF] SumatraPDF stdout: ${out.stdout || '(trống)'} | stderr: ${out.stderr || '(trống)'}`);
         // File đã được in xong (SumatraPDF đã exit), xóa sau 5 giây là đủ
         if (!keepFile) scheduleTempDelete(normalizedPath, 5000);
         return { method: 'SumatraPDF', target: name, file: normalizedPath, command: cmd, stdout: out.stdout, stderr: out.stderr };
       }
-      if (/acrord32|acrobat/i.test(PDF_VIEWER_PATH)) {
+      if (/acrord32|acrobat/i.test(viewerPath)) {
         const cmd = `${viewer} /t ${quotedFile} ${quotedPrinter} "" ""`;
         const out = await tryExec(cmd);
         if (!keepFile) scheduleTempDelete(normalizedPath, 60000);
         return { method: 'Acrobat', target: name, file: normalizedPath, command: cmd, stdout: out.stdout, stderr: out.stderr };
       }
     } catch (e) {
-      throw new Error(`Không thể in PDF qua viewer tùy chỉnh (${PDF_VIEWER_PATH}). ${e.message}`);
+      throw new Error(`Không thể in PDF qua viewer tùy chỉnh (${viewerPath}). ${e.message}`);
     }
   }
   try {
@@ -1110,7 +1206,7 @@ app.post('/print', (req, res) => {
   }
 });
 
-function fetchGhtkPdf(tracking, token, clientSource) {
+function fetchGhtkPdf(tracking, token, clientSource, accountName) {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: 'services.giaohangtietkiem.vn',
@@ -1128,9 +1224,13 @@ function fetchGhtkPdf(tracking, token, clientSource) {
       const chunks = [];
       res.on('data', (d) => chunks.push(d));
       res.on('end', async () => {
-        const buf = Buffer.concat(chunks);
+        let buf = Buffer.concat(chunks);
         if (res.statusCode === 200 && ctype.includes('application/pdf')) {
           try {
+            if (accountName) {
+              console.log(`[GHTK] Đóng dấu tên tài khoản "${accountName}" lên tem ${tracking}`);
+              buf = await stampGhtkLabelPdf(buf, accountName);
+            }
             if (ensureSaveDir()) {
               const saved = await savePdfToDir(buf, `GHTK_${tracking}`);
               return resolve({ filePath: saved, persisted: true });
@@ -1155,21 +1255,140 @@ function fetchGhtkPdf(tracking, token, clientSource) {
   });
 }
 
-async function printGhtkLabels(input, source) {
-  const token = process.env.GHTK_API_TOKEN;
-  const clientSource = process.env.GHTK_CLIENT_SOURCE || '';
-  if (!token) throw new Error('Thiếu GHTK_API_TOKEN trong .env');
-  if (!clientSource) throw new Error('Thiếu GHTK_CLIENT_SOURCE trong .env');
-  const list = normalizeTrackingOrders(input);
-  if (!list.length) throw new Error('Thiếu danh sách TRACKING_ORDER');
-  const results = [];
-  for (const code of list) {
+function queryBackendForGhtkPrintInfo(trackingCode) {
+  return new Promise((resolve) => {
+    const serverUrl = getSocketServerUrl();
+    if (!serverUrl) return resolve(null);
+    const authToken = getSocketAuthToken();
+    const deviceId = getSocketDeviceId();
+    let targetUrl;
     try {
-      console.log(`[GHTK] Bắt đầu in ${code} từ ${source}`);
-      const { filePath, persisted } = await fetchGhtkPdf(code, token, clientSource);
+      targetUrl = new URL(`/api/ghtk/print-info?tracking=${encodeURIComponent(trackingCode)}`, serverUrl);
+    } catch (_) {
+      return resolve(null);
+    }
+
+    const client = targetUrl.protocol === 'https:' ? https : http;
+    const req = client.request(
+      targetUrl,
+      {
+        method: 'GET',
+        headers: {
+          'x-device-id': deviceId,
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {})
+        },
+        timeout: 5000
+      },
+      (res) => {
+        let body = '';
+        res.on('data', (d) => { body += d; });
+        res.on('end', () => {
+          try {
+            if (res.statusCode >= 200 && res.statusCode < 300) {
+              const parsed = JSON.parse(body);
+              if (parsed && parsed.success && parsed.data && parsed.data.token) {
+                return resolve(parsed.data);
+              }
+            }
+          } catch (_) {}
+          resolve(null);
+        });
+      }
+    );
+    req.on('error', () => resolve(null));
+    req.setTimeout(5000, () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.end();
+  });
+}
+
+async function printGhtkLabels(input, source) {
+  const defaultToken = configManager.get('ghtkApiToken') || process.env.GHTK_API_TOKEN || '';
+  const defaultClientSource = configManager.get('ghtkClientSource') || process.env.GHTK_CLIENT_SOURCE || '';
+  const jobs = normalizeGhtkPrintJobs(input);
+  if (!jobs.length) throw new Error('Thiếu danh sách TRACKING_ORDER');
+  const results = [];
+
+  for (const job of jobs) {
+    const code = job.tracking;
+    let token = job.token || '';
+    let clientSource = job.partnerCode || '';
+    let accountName = job.accountName || '';
+
+    // 1. Nếu chưa có token (in trực tiếp qua LAN HTTP / UI thủ công), thử tra cứu từ Backend
+    if (!token) {
+      const backendInfo = await queryBackendForGhtkPrintInfo(code);
+      if (backendInfo && backendInfo.token) {
+        token = backendInfo.token;
+        clientSource = backendInfo.partnerCode || clientSource;
+        accountName = backendInfo.accountName || accountName;
+        console.log(`[GHTK] Đã tra cứu tài khoản từ backend cho ${code}: "${accountName}"`);
+      }
+    }
+
+    // 2. Nếu vẫn chưa có token, thử lần lượt qua bể tài khoản đã sync từ server
+    let preFetchedResult = null;
+    if (!token && syncedGhtkAccounts && syncedGhtkAccounts.length > 0) {
+      console.log(`[GHTK] Đang dò tìm tài khoản cho ${code} trong ${syncedGhtkAccounts.length} tài khoản đồng bộ...`);
+      for (const acc of syncedGhtkAccounts) {
+        if (!acc.token) continue;
+        try {
+          preFetchedResult = await fetchGhtkPdf(code, acc.token, acc.partnerCode || '', acc.name || '');
+          token = acc.token;
+          clientSource = acc.partnerCode || '';
+          accountName = acc.name || '';
+          console.log(`[GHTK] ✔ Dò tìm thành công mã ${code} thuộc tài khoản "${acc.name}"`);
+          break;
+        } catch (_) {
+          // Thử tài khoản kế tiếp
+        }
+      }
+    }
+
+    // 3. Fallback token mặc định cấu hình trên máy in nếu có
+    if (!token && !preFetchedResult) {
+      token = defaultToken;
+      clientSource = clientSource || defaultClientSource;
+    }
+
+    if (!token && !preFetchedResult) {
+      results.push({ tracking: code, status: 'error', message: 'Không tìm thấy tài khoản GHTK phù hợp để in nhãn' });
+      console.error(`[GHTK] Bỏ qua ${code}: Không tìm thấy tài khoản GHTK hợp lệ`);
+      continue;
+    }
+
+    try {
+      console.log(`[GHTK] Bắt đầu in ${code} từ ${source}${accountName ? ` (TK: ${accountName})` : ''}`);
+      let fetchResult = preFetchedResult;
+      if (!fetchResult) {
+        try {
+          fetchResult = await fetchGhtkPdf(code, token, clientSource, accountName);
+        } catch (initialErr) {
+          // Nếu gọi token ban đầu thất bại (ví dụ tài khoản bị lệch), tự động thử dò qua các tài khoản còn lại
+          let fallbackSuccess = false;
+          if (syncedGhtkAccounts && syncedGhtkAccounts.length > 0) {
+            console.warn(`[GHTK] Thử fallback mã ${code} với các tài khoản khác sau khi lỗi: ${initialErr.message}`);
+            for (const acc of syncedGhtkAccounts) {
+              if (!acc.token || acc.token === token) continue;
+              try {
+                fetchResult = await fetchGhtkPdf(code, acc.token, acc.partnerCode || '', acc.name || '');
+                accountName = acc.name || '';
+                fallbackSuccess = true;
+                console.log(`[GHTK] ✔ Dò fallback thành công mã ${code} sang tài khoản "${acc.name}"`);
+                break;
+              } catch (_) {}
+            }
+          }
+          if (!fallbackSuccess) throw initialErr;
+        }
+      }
+
+      const { filePath, persisted } = fetchResult;
       const printResult = await sendToPrinterPdf(filePath, CURRENT_PRINTER, { keepFile: persisted });
-      results.push({ tracking: code, status: 'success', savedPath: persisted ? filePath : null, result: printResult });
-      console.log(`[GHTK] In thành công ${code} từ ${source}`);
+      results.push({ tracking: code, status: 'success', accountName, savedPath: persisted ? filePath : null, result: printResult });
+      console.log(`[GHTK] In thành công ${code} từ ${source}${accountName ? ` (TK: ${accountName})` : ''}`);
     } catch (e) {
       const message = String(e.message || e);
       results.push({ tracking: code, status: 'error', message });
@@ -1185,17 +1404,29 @@ async function printGhtkLabels(input, source) {
  * Tìm đường dẫn Chromium/Edge/Chrome có thể dùng headless
  */
 function findHeadlessBrowser() {
-  const candidates = [
-    // Microsoft Edge (thường có sẵn trên Windows 10/11)
-    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-    // Google Chrome
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-    // Chromium
-    'C:\\Program Files\\Chromium\\Application\\chrome.exe',
-  ];
-  // Kiểm tra biến môi trường
+  const candidates = process.platform === 'win32'
+    ? [
+        // Microsoft Edge (thường có sẵn trên Windows 10/11)
+        'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+        'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+        // Google Chrome
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+        // Chromium
+        'C:\\Program Files\\Chromium\\Application\\chrome.exe',
+      ]
+    : [
+        // macOS
+        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+        '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+        '/Applications/Chromium.app/Contents/MacOS/Chromium',
+        '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+        // Linux
+        '/usr/bin/google-chrome',
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
+      ];
+  // Ưu tiên biến môi trường nếu có
   const envBrowser = String(process.env.HEADLESS_BROWSER_PATH || '').trim();
   if (envBrowser) candidates.unshift(envBrowser);
 
@@ -1206,142 +1437,155 @@ function findHeadlessBrowser() {
 }
 
 /**
- * Dùng Edge/Chrome headless để render URL thành PDF (A5 portrait)
- * Trả về filePath của PDF tạm
+ * Build CSS override để ép VTP label vừa khổ giấy in (từ LABEL_WIDTH/HEIGHT_MM).
+ * VTP gốc thiết kế label A6 (96x148mm) với các element position: absolute
+ * tọa độ pixel. Override này giữ nguyên kích thước đó, dùng flexbox center
+ * trên khổ giấy thực tế. Không cần scale vì A6 gần bằng 100x150mm.
  */
-function renderUrlToPdf(url) {
-  return new Promise((resolve, reject) => {
-    const browserPath = findHeadlessBrowser();
-    if (!browserPath) {
-      return reject(new Error(
-        'Không tìm thấy trình duyệt Chromium/Edge/Chrome để render URL. ' +
-        'Cài Microsoft Edge hoặc Google Chrome, hoặc thiết lập HEADLESS_BROWSER_PATH trong .env'
-      ));
-    }
+function buildVtpCss(previewMode) {
+  const pw = parseFloat(process.env.LABEL_WIDTH_MM || '100') || 100;
+  const ph = parseFloat(process.env.LABEL_HEIGHT_MM || '150') || 150;
+  // VTP label gốc là A6 (96x148mm)
+  const lw = 96;
+  const lh = 148;
 
-    // Tạo thư mục temp riêng, dùng tên ngắn để tránh long-path issues
-    const tmpDir = path.join(os.tmpdir(), `vtp${Date.now()}`);
-    const pdfPath = path.join(tmpDir, 'out.pdf');
+  let css = `
+@page { size: ${pw}mm ${ph}mm !important; margin: 0 !important; }
+.page {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  grid-template-columns: none !important;
+  gap: 0 !important;
+  width: ${pw}mm !important;
+  height: ${ph}mm !important;
+  margin: 0 !important;
+  page-break-after: avoid !important;
+  position: relative;
+  overflow: hidden;
+}
+.mainPrints {
+  width: ${lw}mm !important;
+  height: ${lh}mm !important;
+  margin: 0 !important;
+  border: none !important;
+  flex-shrink: 0;
+  position: relative;
+}
+.group-btn { display: none !important; }
+  `.trim();
 
-    try {
-      fs.mkdirSync(tmpDir, { recursive: true });
-    } catch (e) {
-      return reject(new Error(`Không tạo được thư mục temp: ${e.message}`));
-    }
+  if (previewMode) {
+    css += `
+html, body { margin: 0; padding: 0; }
+body {
+  background: #e5e7eb;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  min-height: 100vh;
+  padding: 24px;
+  box-sizing: border-box;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.page {
+  background: #fff;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.18);
+}
+@media print {
+  body { background: #fff !important; padding: 0 !important; }
+  .page { box-shadow: none !important; }
+}
+    `.trim();
+  }
+  return css;
+}
 
-    // A5 portrait: 148x210mm → inches: 5.827 x 8.268
-    const args = [
-      '--headless',           // dùng --headless (legacy) thay vì --headless=new để tương thích rộng hơn
-      '--disable-gpu',
+/** CSS cho in PDF (body do puppeteer lo) */
+function getVtpPrintCss() { return buildVtpCss(false); }
+
+/** CSS cho preview (tab mới, có nền xám + shadow + @media print) */
+function getVtpPreviewCss() { return buildVtpCss(true); }
+
+/**
+ * Khởi động Edge/Chrome headless qua puppeteer-core (dùng browser có sẵn trên máy)
+ */
+async function launchHeadlessBrowser() {
+  const browserPath = findHeadlessBrowser();
+  if (!browserPath) {
+    throw new Error(
+      'Không tìm thấy trình duyệt Chromium/Edge/Chrome để render URL. ' +
+      'Cài Microsoft Edge hoặc Google Chrome, hoặc thiết lập HEADLESS_BROWSER_PATH trong .env'
+    );
+  }
+  return await puppeteer.launch({
+    executablePath: browserPath,
+    headless: true,
+    args: [
       '--no-sandbox',
+      '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
+      '--disable-gpu',
       '--disable-extensions',
       '--disable-background-networking',
       '--run-all-compositor-stages-before-draw',
-      '--virtual-time-budget=10000',
-      `--print-to-pdf=${pdfPath}`,
-      '--print-to-pdf-no-header',
-      '--no-pdf-header-footer',
-      '--paper-width=5.827',
-      '--paper-height=8.268',
-      '--margin-top=0.4',
-      '--margin-bottom=0.4',
-      '--margin-left=0.4',
-      '--margin-right=0.4',
-      url
-    ];
-
-    const { spawn } = require('child_process');
-    console.log(`[VTP] Render URL: ${url}`);
-    console.log(`[VTP] Browser: ${browserPath}`);
-    console.log(`[VTP] Output PDF: ${pdfPath}`);
-    console.log(`[VTP] Args: ${args.join(' ')}`);
-
-    const child = spawn(browserPath, args, {
-      windowsHide: true,
-      cwd: tmpDir,   // đặt cwd = tmpDir để Edge ghi output.pdf vào đây nếu bỏ qua path
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
-
-    let stderr = '';
-    let stdout = '';
-    child.stdout && child.stdout.on('data', d => { stdout += d.toString(); });
-    child.stderr && child.stderr.on('data', d => { stderr += d.toString(); });
-
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error(`Timeout render URL "${url}" sau 30 giây`));
-    }, 30000);
-
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      console.log(`[VTP] Edge exit code: ${code}`);
-      if (stderr) console.log(`[VTP] Edge stderr: ${stderr.slice(0, 500)}`);
-      if (stdout) console.log(`[VTP] Edge stdout: ${stdout.slice(0, 200)}`);
-
-      // Đợi 800ms để OS flush file xuống disk
-      setTimeout(() => {
-        // Tìm PDF theo thứ tự ưu tiên:
-        // 1. Path chỉ định (out.pdf trong tmpDir)
-        // 2. Bất kỳ .pdf nào trong tmpDir (Edge đôi khi đặt tên khác)
-        // 3. output.pdf trong thư mục home user (Edge legacy behavior)
-        const searchPaths = [
-          pdfPath,
-          path.join(tmpDir, 'output.pdf'),
-          path.join(os.homedir(), 'out.pdf'),
-          path.join(os.homedir(), 'output.pdf'),
-          path.join(process.cwd(), 'out.pdf'),
-          path.join(process.cwd(), 'output.pdf'),
-        ];
-
-        let foundPath = null;
-
-        // Tìm trong searchPaths
-        for (const p of searchPaths) {
-          if (fs.existsSync(p)) { foundPath = p; break; }
-        }
-
-        // Tìm bất kỳ .pdf nào trong tmpDir
-        if (!foundPath) {
-          try {
-            const files = fs.readdirSync(tmpDir).filter(f => f.toLowerCase().endsWith('.pdf'));
-            if (files.length > 0) foundPath = path.join(tmpDir, files[0]);
-          } catch {}
-        }
-
-        if (!foundPath) {
-          try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-          const errDetail = [
-            stderr ? `stderr: ${stderr.slice(0, 300)}` : '',
-            `exit code ${code}`,
-            `tmpDir contents: ${(() => { try { return fs.readdirSync(tmpDir).join(', ') || '(trống)'; } catch { return '(không đọc được)'; } })()}`
-          ].filter(Boolean).join(' | ');
-          return reject(new Error(`Không tạo được PDF từ URL "${url}". ${errDetail}`));
-        }
-
-        // Kiểm tra file có nội dung không (> 100 bytes)
-        try {
-          const stat = fs.statSync(foundPath);
-          if (stat.size < 100) {
-            try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-            return reject(new Error(`PDF tạo ra bị rỗng (${stat.size} bytes) từ URL "${url}"`));
-          }
-          console.log(`[VTP] PDF tạo thành công: ${foundPath} (${stat.size} bytes)`);
-        } catch (e) {
-          try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-          return reject(new Error(`Không đọc được file PDF: ${e.message}`));
-        }
-
-        resolve(foundPath);
-      }, 800);
-    });
-
-    child.on('error', (err) => {
-      clearTimeout(timer);
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-      reject(new Error(`Không thể khởi động browser: ${err.message}`));
-    });
+    ],
   });
+}
+
+/**
+ * Dùng puppeteer-core render URL VTP thành PDF A5 portrait.
+ * Inject CSS override để nhãn VTP vừa đúng khổ A5 (gốc là A4 + grid 2 cột).
+ * Trả về filePath của PDF tạm.
+ */
+async function renderUrlToPdf(url) {
+  // Tạo thư mục temp riêng, suffix random để tránh trùng khi in song song
+  const tmpDir = path.join(os.tmpdir(), `vtp${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
+  const pdfPath = path.join(tmpDir, 'out.pdf');
+
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+  } catch (e) {
+    throw new Error(`Không tạo được thư mục temp: ${e.message}`);
+  }
+
+  console.log(`[VTP] Render URL: ${url}`);
+  console.log(`[VTP] Output PDF: ${pdfPath}`);
+
+  // Lấy kích thước giấy từ .env (LABEL_WIDTH_MM x LABEL_HEIGHT_MM)
+  const pw = parseFloat(process.env.LABEL_WIDTH_MM || '100') || 100;
+  const ph = parseFloat(process.env.LABEL_HEIGHT_MM || '150') || 150;
+
+  console.log(`[VTP] PDF paper size: ${pw}x${ph}mm`);
+
+  const browser = await launchHeadlessBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 800, height: 1200, deviceScaleFactor: 1 });
+
+    await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 });
+    await new Promise((r) => setTimeout(r, 800));
+
+    await page.addStyleTag({ content: getVtpPrintCss() });
+    await new Promise((r) => setTimeout(r, 300));
+
+    await page.pdf({
+      path: pdfPath,
+      width: `${pw}mm`,
+      height: `${ph}mm`,
+      printBackground: true,
+      margin: { top: 0, right: 0, bottom: 0, left: 0 },
+    });
+
+    const stat = fs.statSync(pdfPath);
+    if (stat.size < 100) {
+      throw new Error(`PDF tạo ra bị rỗng (${stat.size} bytes) từ URL "${url}"`);
+    }
+    console.log(`[VTP] PDF tạo thành công: ${pdfPath} (${stat.size} bytes)`);
+    return pdfPath;
+  } finally {
+    await browser.close().catch(() => {});
+  }
 }
 
 /**
@@ -1357,7 +1601,7 @@ async function printViettelPostUrls(urls, source) {
     try {
       console.log(`[VTP] Bắt đầu in URL: ${url} từ ${source}`);
       const pdfPath = await renderUrlToPdf(url);
-      const printResult = await sendToPrinterPdf(pdfPath, CURRENT_PRINTER, { keepFile: true, paperSize: 'a5' });
+      const printResult = await sendToPrinterPdf(pdfPath, CURRENT_PRINTER, { keepFile: true });
       // Xóa PDF sau 60 giây để SumatraPDF kịp đọc và in xong
       setTimeout(() => {
         try { fs.rmSync(path.dirname(pdfPath), { recursive: true, force: true }); } catch {}
@@ -1395,6 +1639,62 @@ app.post('/print-viettelpost', express.json({ limit: '1mb' }), async (req, res) 
   }
 });
 
+// ─── Preview VTP: render URL thành HTML với CSS A5, trả về cho client mở tab mới ─
+
+/**
+ * Render URL VTP thành HTML đã áp CSS A5, trả về text/html cho client mở tab mới.
+ * Inject <base> để relative URL trong HTML VTP (ảnh, script, css) vẫn load đúng từ server VTP.
+ */
+async function renderVtpUrlToHtml(url) {
+  const browser = await launchHeadlessBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 800, height: 1200, deviceScaleFactor: 1 });
+
+    await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 });
+    await new Promise((r) => setTimeout(r, 800));
+
+    await page.addStyleTag({ content: getVtpPreviewCss() });
+    await new Promise((r) => setTimeout(r, 300));
+
+    let html = await page.content();
+
+    // Inject <base> đầu <head> để URL tương đối (./css/..., images/...) trỏ về VTP server
+    let baseHref = '';
+    try {
+      const u = new URL(url);
+      baseHref = u.origin + u.pathname.substring(0, u.pathname.lastIndexOf('/') + 1);
+    } catch {}
+    if (baseHref) {
+      html = html.replace(/<head([^>]*)>/i, `<head$1>\n<base href="${baseHref}">`);
+    }
+    return html;
+  } finally {
+    await browser.close().catch(() => {});
+  }
+}
+
+app.post('/preview-viettelpost', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const url = String(body.url || '').trim();
+    if (!url) {
+      return res.status(400).type('text/plain').send('Thiếu URL');
+    }
+    if (!/^https?:\/\//i.test(url)) {
+      return res.status(400).type('text/plain').send('URL phải bắt đầu bằng http(s)://');
+    }
+    console.log(`[API /preview-viettelpost] URL: ${url}`);
+    const html = await renderVtpUrlToHtml(url);
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    res.set('Cache-Control', 'no-store');
+    res.send(html);
+  } catch (err) {
+    console.error('[API /preview-viettelpost] Error:', err);
+    res.status(500).type('text/plain').send(`Lỗi preview: ${err.message}`);
+  }
+});
+
 app.post('/print-ghtk-label', express.json({ limit: '1mb' }), async (req, res) => {
   try {
     const results = await printGhtkLabels(req.body, '/print-ghtk-label');
@@ -1408,6 +1708,17 @@ app.post('/print-return-to-workshop-slip', express.json({ limit: '1mb' }), async
   try {
     const body = req.body || {};
     const slip = body.slip && typeof body.slip === 'object' ? body.slip : body;
+    const opts = {
+      sizeQr: body.sizeQr || slip.sizeQr,
+      sizeTitle: body.sizeTitle || slip.sizeTitle,
+      sizeSubtitle: body.sizeSubtitle || slip.sizeSubtitle,
+      sizeContent: body.sizeContent || slip.sizeContent,
+      sizeReason: body.sizeReason || slip.sizeReason,
+      paddingLeft: body.paddingLeft ?? slip.paddingLeft ?? (process.env.RETURN_SLIP_PADDING_LEFT ? Number(process.env.RETURN_SLIP_PADDING_LEFT) : undefined),
+      paddingRight: body.paddingRight ?? slip.paddingRight ?? (process.env.RETURN_SLIP_PADDING_RIGHT ? Number(process.env.RETURN_SLIP_PADDING_RIGHT) : undefined),
+    };
+    // Clean undefined keys
+    Object.keys(opts).forEach(k => { if (opts[k] == null) delete opts[k]; });
     const result = await printReturnToWorkshopSlip(slip, {
       renderDocumentToPdf: (docPath) => {
         const fileUrl = 'file:///' + String(docPath).replace(/\\/g, '/');
@@ -1415,7 +1726,7 @@ app.post('/print-return-to-workshop-slip', express.json({ limit: '1mb' }), async
       },
       sendToPrinterPdf,
       printerName: CURRENT_PRINTER,
-    });
+    }, opts);
     return res.json({ status: 'success', result });
   } catch (err) {
     console.error('[API /print-return-to-workshop-slip] Error:', err);
@@ -1518,6 +1829,8 @@ app.post('/printer', express.json(), async (req, res) => {
     const found = printers.find((p) => p.name === name);
     if (!found) return res.status(404).json({ status: 'error', message: `Không tìm thấy máy in "${name}"` });
     CURRENT_PRINTER = name;
+    configManager.save({ printerName: name });
+    startMdns(configManager.get());
     console.log(`[CONFIG] Chọn máy in: ${CURRENT_PRINTER}`);
     return res.json({ status: 'success', currentPrinter: CURRENT_PRINTER });
   } catch (err) {
@@ -1527,7 +1840,188 @@ app.post('/printer', express.json(), async (req, res) => {
 
 app.get('/config', (req, res) => {
   const socket = getSocketStatus();
-  res.json({ port: PORT, printerName: CURRENT_PRINTER, socket, websocket: socket });
+  const cfg = configManager.get();
+  res.json({
+    ...cfg,
+    port: cfg.port || PORT,
+    printerName: CURRENT_PRINTER,
+    socket,
+    websocket: socket,
+    pdfViewerDetected: configManager.detectPdfViewer()
+  });
+});
+
+// Full API config endpoints
+app.get('/api/config', (req, res) => {
+  const cfg = configManager.get();
+  const socket = getSocketStatus();
+  let appVersion = '1.0.1';
+  try {
+    appVersion = require('./package.json').version;
+  } catch {}
+  res.json({
+    ...cfg,
+    port: cfg.port || PORT,
+    printerName: CURRENT_PRINTER,
+    socket,
+    pdfViewerDetected: configManager.detectPdfViewer(),
+    version: appVersion
+  });
+});
+
+app.post('/api/config', express.json(), (req, res) => {
+  try {
+    const updates = req.body || {};
+    const result = configManager.save(updates);
+    if (!result.success) {
+      return res.status(500).json({ status: 'error', message: result.error });
+    }
+    if (updates.printerName) {
+      CURRENT_PRINTER = updates.printerName;
+      console.log(`[CONFIG] Cập nhật CURRENT_PRINTER: ${CURRENT_PRINTER}`);
+    }
+    startMdns(configManager.get());
+    if (updates.backendSocketUrl !== undefined || updates.backendSocketToken !== undefined || updates.backendSocketDeviceId !== undefined) {
+      reconnectSocketIo();
+    }
+    res.json({ status: 'success', config: configManager.get(), currentPrinter: CURRENT_PRINTER });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: String(err.message || err) });
+  }
+});
+
+// Setup complete endpoint
+app.post('/api/setup/complete', express.json(), (req, res) => {
+  try {
+    const data = req.body || {};
+    const updates = {
+      ...data,
+      isConfigured: true
+    };
+    const result = configManager.save(updates);
+    if (!result.success) {
+      return res.status(500).json({ status: 'error', message: result.error });
+    }
+    if (updates.printerName) {
+      CURRENT_PRINTER = updates.printerName;
+    }
+    startMdns(configManager.get());
+    reconnectSocketIo();
+    console.log(`[SETUP] Thiết lập ban đầu hoàn tất! Máy in: ${CURRENT_PRINTER}, mDNS: ${configManager.get('mdnsName')}`);
+    res.json({ status: 'success', message: 'Thiết lập ban đầu hoàn tất', config: configManager.get() });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: String(err.message || err) });
+  }
+});
+
+// PDF engine detection & download
+app.get('/api/pdf-engine/status', (req, res) => {
+  const detected = configManager.detectPdfViewer();
+  res.json({
+    ...detected,
+    currentConfigPath: configManager.get('pdfViewerPath')
+  });
+});
+
+app.post('/api/pdf-engine/download', async (req, res) => {
+  try {
+    console.log('[PDF] Đang bắt đầu tải SumatraPDF Portable...');
+    const targetPath = await configManager.downloadPortableSumatra();
+    console.log(`[PDF] Đã tải thành công SumatraPDF Portable tại: ${targetPath}`);
+    res.json({ status: 'success', path: targetPath, message: 'Đã tải thành công SumatraPDF Portable' });
+  } catch (err) {
+    console.error('[PDF] Tải SumatraPDF Portable lỗi:', err.message);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+// Updater endpoints
+let latestUpdaterStatus = {
+  status: 'idle',
+  message: 'Chưa kiểm tra cập nhật'
+};
+
+if (process.on) {
+  process.on('message', (msg) => {
+    if (msg && msg.type === 'updater-event' && msg.payload) {
+      latestUpdaterStatus = msg.payload;
+      console.log(`[UPDATER EVENT] ${latestUpdaterStatus.status}: ${latestUpdaterStatus.message || ''}`);
+    }
+  });
+}
+
+app.get('/api/update/status', (req, res) => {
+  res.json(latestUpdaterStatus);
+});
+
+app.post('/api/update/check', (req, res) => {
+  if (process.send) {
+    process.send({ action: 'check-update' });
+    latestUpdaterStatus = { status: 'checking', message: 'Đang kiểm tra cập nhật...' };
+    res.json({ status: 'sent', message: 'Đang kiểm tra cập nhật...' });
+  } else {
+    res.json({ status: 'standalone', message: 'Server đang chạy độc lập không qua Electron' });
+  }
+});
+
+app.post('/api/update/download', (req, res) => {
+  if (process.send) {
+    process.send({ action: 'download-update' });
+    latestUpdaterStatus = { status: 'downloading', percent: 0, message: 'Đang bắt đầu tải...' };
+    res.json({ status: 'sent', message: 'Bắt đầu tải bản cập nhật' });
+  } else {
+    res.json({ status: 'standalone', message: 'Server đang chạy độc lập không qua Electron' });
+  }
+});
+
+app.post('/api/update/install', (req, res) => {
+  if (process.send) {
+    process.send({ action: 'install-update' });
+    res.json({ status: 'sent', message: 'Đang khởi động lại để cài đặt...' });
+  } else {
+    res.json({ status: 'standalone', message: 'Server đang chạy độc lập không qua Electron' });
+  }
+});
+
+// Print test endpoint
+app.post('/api/print-test', express.json(), async (req, res) => {
+  try {
+    const printerName = sanitizePrinterName(req.body && req.body.printerName) || CURRENT_PRINTER;
+    if (!printerName) {
+      return res.status(400).json({ status: 'error', message: 'Chưa chọn máy in để in thử' });
+    }
+    const nowStr = new Date().toLocaleString('vi-VN');
+    const tspl = [
+      'SIZE 100 mm, 50 mm',
+      'GAP 2 mm, 0',
+      'CLS',
+      'DIRECTION 1',
+      'TEXT 50,30,"TSS24.BF2",0,2,2,"VIVU PRINTER"',
+      'TEXT 50,90,"TSS24.BF2",0,1,1,"KET NOI MAY IN THANH CONG"',
+      `TEXT 50,130,"TSS24.BF2",0,1,1,"May in: ${printerName}"`,
+      `TEXT 50,170,"TSS24.BF2",0,1,1,"Thoi gian: ${nowStr}"`,
+      'PRINT 1'
+    ].join('\r\n');
+
+    const result = await sendToPrinterRaw(tspl, printerName);
+    res.json({ status: 'success', message: 'Đã gửi lệnh in thử tới máy in!', result });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: String(err.message || err) });
+  }
+});
+
+// Reconnect socket backend
+app.post('/socket/reconnect', (req, res) => {
+  const url = getSocketServerUrl();
+  if (!url) {
+    return res.json({ status: 'error', message: 'Chưa cấu hình Backend Socket URL' });
+  }
+  try {
+    reconnectSocketIo();
+    res.json({ status: 'success', message: 'Đang kết nối lại...' });
+  } catch (err) {
+    res.json({ status: 'error', message: String(err.message || err) });
+  }
 });
 
 function getExeCommandForStartup() {
@@ -1677,10 +2171,37 @@ const server = app.listen(PORT, () => {
     })
     .catch(() => {});
   startUdpBroadcast();
+  startMdns(configManager.get());
   startSocketClient();
 });
 
 server.on('error', (e) => {
+  if (e.code === 'EADDRINUSE') {
+    console.error(`[SERVER] Cổng ${PORT} đã bị ứng dụng khác chiếm giữ!`);
+    const nextPort = PORT + 1;
+    console.log(`[SERVER] Đang thử khởi động lại tại cổng dự phòng: ${nextPort}...`);
+    configManager.save({ port: nextPort });
+    try {
+      const fallbackServer = app.listen(nextPort, () => {
+        PORT = nextPort;
+        console.log(`Print Server chạy thành công tại cổng dự phòng http://localhost:${PORT}/`);
+        if (process.send) {
+          process.send({ type: 'port-changed', port: nextPort });
+        }
+        startUdpBroadcast();
+        startMdns(configManager.get());
+        startSocketClient();
+      });
+      fallbackServer.on('error', (err2) => {
+        console.error(`[SERVER] Cổng dự phòng ${nextPort} cũng bị chiếm hoặc lỗi: ${err2.message}`);
+        process.exit(1);
+      });
+      return;
+    } catch (errFallback) {
+      console.error(`[SERVER] Không thể mở cổng dự phòng: ${errFallback.message}`);
+      process.exit(1);
+    }
+  }
   console.error(`[SERVER] Lỗi khởi động server: ${e.message}`);
   process.exit(1);
 });

@@ -1,10 +1,80 @@
+let globalConfig = {};
+
 async function fetchConfig() {
   try {
-    const res = await fetch('/config');
+    const res = await fetch('/api/config');
     const data = await res.json();
+    globalConfig = data;
     const el = document.getElementById('config');
-    el.textContent = `(${data.printerName} • http://localhost:${data.port})`;
+    if (el) el.textContent = `(${data.printerName || 'Chưa chọn máy in'} • http://localhost:${data.port || 3232})`;
+
+    const versionBadge = document.getElementById('appVersionBadge');
+    if (versionBadge && data.version) {
+      versionBadge.textContent = `v${data.version}`;
+    }
+
+    const mdnsBadge = document.getElementById('mdnsBadge');
+    if (mdnsBadge) {
+      mdnsBadge.textContent = `${data.mdnsName || 'vivu-printer'}.local`;
+    }
+
+    // Cập nhật badge kết nối backend
+    const badge = document.getElementById('socketBadge');
+    const btnReconnect = document.getElementById('btnReconnect');
+    if (badge && data.socket) {
+      if (data.socket.connected) {
+        badge.textContent = '● Backend: Đã kết nối';
+        badge.style.background = '#10b981';
+        badge.style.color = '#fff';
+        if (btnReconnect) btnReconnect.style.display = 'none';
+      } else if (data.socket.enabled) {
+        badge.textContent = '○ Backend: Mất kết nối';
+        badge.style.background = '#ef4444';
+        badge.style.color = '#fff';
+        if (btnReconnect) btnReconnect.style.display = 'inline-block';
+      } else {
+        badge.textContent = '○ Backend: Chưa cấu hình';
+        badge.style.background = '#6b7280';
+        badge.style.color = '#fff';
+        if (btnReconnect) btnReconnect.style.display = 'none';
+      }
+    }
+
+    // Tự động mở Setup Wizard nếu chưa cấu hình ban đầu
+    if (!data.isConfigured && !window._wizardDismissed) {
+      openSetupWizard();
+    }
   } catch {}
+}
+
+async function reconnectBackend() {
+  const badge = document.getElementById('socketBadge');
+  const btnReconnect = document.getElementById('btnReconnect');
+  if (btnReconnect) btnReconnect.disabled = true;
+  if (badge) {
+    badge.textContent = '◌ Đang kết nối lại...';
+    badge.style.background = '#f59e0b';
+    badge.style.color = '#fff';
+  }
+  try {
+    const res = await fetch('/socket/reconnect', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'error') {
+      if (badge) {
+        badge.textContent = '✕ ' + data.message;
+        badge.style.background = '#ef4444';
+      }
+    }
+    // Chờ 2 giây rồi refresh trạng thái
+    setTimeout(fetchConfig, 2000);
+  } catch (e) {
+    if (badge) {
+      badge.textContent = '✕ Lỗi kết nối';
+      badge.style.background = '#ef4444';
+    }
+  } finally {
+    if (btnReconnect) btnReconnect.disabled = false;
+  }
 }
 
 async function loadPrinters() {
@@ -237,6 +307,56 @@ async function printVtp() {
   }
 }
 
+async function previewVtp() {
+  const ta = document.getElementById('vtpList');
+  const statusEl = document.getElementById('statusVtp');
+  const btn = document.getElementById('btnPreviewVtp');
+  const raw = ta.value || '';
+  const firstUrl = raw
+    .split(/\n+/)
+    .map(s => s.trim())
+    .filter(Boolean)[0];
+  if (!firstUrl) {
+    statusEl.textContent = 'Chưa nhập URL để preview';
+    return;
+  }
+  if (!/^https?:\/\//i.test(firstUrl)) {
+    statusEl.textContent = 'URL phải bắt đầu bằng http(s)://';
+    return;
+  }
+  btn.disabled = true;
+  statusEl.textContent = 'Đang tạo preview (lần đầu có thể mất 5-10s)...';
+  try {
+    const res = await fetch('/preview-viettelpost', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: firstUrl })
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      statusEl.textContent = `Lỗi: ${text}`;
+      return;
+    }
+    const html = await res.text();
+    const blob = new Blob([html], { type: 'text/html; charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const win = window.open(url, '_blank', 'noopener');
+    if (!win) {
+      statusEl.textContent = 'Trình duyệt chặn popup — hãy cho phép popup cho localhost';
+    } else {
+      statusEl.textContent = 'Đã mở preview ở tab mới';
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
+  } catch (e) {
+    statusEl.textContent = 'Lỗi: ' + (e.message || String(e));
+  } finally {
+    btn.disabled = false;
+    setTimeout(() => {
+      if (statusEl.textContent && statusEl.textContent.startsWith('Đã mở')) statusEl.textContent = '';
+    }, 3000);
+  }
+}
+
 
 function bindEvents() {
   document.getElementById('btnPrintTspl').addEventListener('click', printTspl);
@@ -259,9 +379,12 @@ function bindEvents() {
   document.getElementById('btnRefreshPrinters').addEventListener('click', () => {
     loadPrinters();
   });
+  const btnReconnect = document.getElementById('btnReconnect');
+  if (btnReconnect) btnReconnect.addEventListener('click', reconnectBackend);
   document.getElementById('btnPrintPdf').addEventListener('click', printPdf);
   document.getElementById('btnPrintGhtk').addEventListener('click', printGhtk);
   document.getElementById('btnPrintVtp').addEventListener('click', printVtp);
+  document.getElementById('btnPreviewVtp').addEventListener('click', previewVtp);
 
   // Settings modal controls
   const btnSettings = document.getElementById('btnSettings');
@@ -269,6 +392,8 @@ function bindEvents() {
   const settingsModal = document.getElementById('settingsModal');
   const btnLoadEnv = document.getElementById('btnLoadEnv');
   const btnSaveEnv = document.getElementById('btnSaveEnv');
+  const btnImportEnv = document.getElementById('btnImportEnv');
+  const importEnvFile = document.getElementById('importEnvFile');
   const btnAddEnvVar = document.getElementById('btnAddEnvVar');
   const envList = document.getElementById('envList');
   const envRowTemplate = document.getElementById('envRowTemplate');
@@ -288,108 +413,457 @@ function bindEvents() {
   const btnRenderShipPreview = document.getElementById('btnRenderShipPreview');
   const btnOpenShipPreviewWindow = document.getElementById('btnOpenShipPreviewWindow');
 
-  function showSettings() {
-    if (settingsModal) {
-      settingsModal.style.display = 'flex';
-      // load env content when opening
-      loadEnv().catch(() => {});
+  function saveReturnSlipSettings() {
+    try {
+      const data = {
+        sizeTitle: document.getElementById('sizeTitle')?.value,
+        sizeSubtitle: document.getElementById('sizeSubtitle')?.value,
+        sizeContent: document.getElementById('sizeContent')?.value,
+        sizeReason: document.getElementById('sizeReason')?.value,
+        sizeQr: document.getElementById('sizeQr')?.value,
+        paddingLeft: document.getElementById('paddingLeft')?.value,
+        paddingRight: document.getElementById('paddingRight')?.value,
+        fontScale: fontScale?.value,
+      };
+      localStorage.setItem('vivu_return_slip_settings', JSON.stringify(data));
+    } catch {}
+  }
+
+  function loadReturnSlipSettings() {
+    try {
+      const raw = localStorage.getItem('vivu_return_slip_settings');
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (data.sizeTitle && document.getElementById('sizeTitle')) document.getElementById('sizeTitle').value = data.sizeTitle;
+      if (data.sizeSubtitle && document.getElementById('sizeSubtitle')) document.getElementById('sizeSubtitle').value = data.sizeSubtitle;
+      if (data.sizeContent && document.getElementById('sizeContent')) document.getElementById('sizeContent').value = data.sizeContent;
+      if (data.sizeReason && document.getElementById('sizeReason')) document.getElementById('sizeReason').value = data.sizeReason;
+      if (data.sizeQr && document.getElementById('sizeQr')) document.getElementById('sizeQr').value = data.sizeQr;
+      if (data.paddingLeft && document.getElementById('paddingLeft')) document.getElementById('paddingLeft').value = data.paddingLeft;
+      if (data.paddingRight && document.getElementById('paddingRight')) document.getElementById('paddingRight').value = data.paddingRight;
+      if (data.fontScale && fontScale) {
+        fontScale.value = data.fontScale;
+        updateFontLabel(data.fontScale);
+      }
+    } catch {}
+  }
+
+  // --- Setup Wizard & Settings Logic ---
+  const setupWizardModal = document.getElementById('setupWizardModal');
+  const wizardPrinterSelect = document.getElementById('wizardPrinterSelect');
+  const wizardPrinterStatus = document.getElementById('wizardPrinterStatus');
+  const wizardMdnsName = document.getElementById('wizardMdnsName');
+  const wizardPort = document.getElementById('wizardPort');
+  const wizardMdnsPreview = document.getElementById('wizardMdnsPreview');
+  const wizardPdfEngineText = document.getElementById('wizardPdfEngineText');
+  const btnWizardDownloadPdf = document.getElementById('btnWizardDownloadPdf');
+  const wizardPdfViewerPath = document.getElementById('wizardPdfViewerPath');
+  const wizardDeviceId = document.getElementById('wizardDeviceId');
+  const wizardGhtkToken = document.getElementById('wizardGhtkToken');
+  const wizardStatus = document.getElementById('wizardStatus');
+
+  async function openSetupWizard() {
+    if (!setupWizardModal) return;
+    setupWizardModal.style.display = 'flex';
+    if (wizardStatus) wizardStatus.textContent = '';
+    await loadWizardData();
+  }
+
+  function closeSetupWizard() {
+    if (setupWizardModal) setupWizardModal.style.display = 'none';
+    window._wizardDismissed = true;
+  }
+
+  async function loadWizardData() {
+    try {
+      const pRes = await fetch('/printers');
+      const pData = await pRes.json();
+      const { printers = [], currentPrinter } = pData;
+      if (wizardPrinterSelect) {
+        wizardPrinterSelect.innerHTML = '';
+        for (const p of printers) {
+          const opt = document.createElement('option');
+          opt.value = p.name;
+          opt.textContent = p.name + (p.default ? ' (mặc định)' : '');
+          if (p.name === currentPrinter) opt.selected = true;
+          wizardPrinterSelect.appendChild(opt);
+        }
+      }
+
+      if (wizardMdnsName) wizardMdnsName.value = globalConfig.mdnsName || 'vivu-printer';
+      if (wizardPort) wizardPort.value = globalConfig.port || 3232;
+      updateWizardMdnsPreview();
+      if (wizardDeviceId) wizardDeviceId.value = globalConfig.backendSocketDeviceId || 'vivu_printer1';
+      if (wizardGhtkToken) wizardGhtkToken.value = globalConfig.ghtkApiToken || '';
+
+      await checkPdfEngine(wizardPdfEngineText, btnWizardDownloadPdf, wizardPdfViewerPath);
+    } catch (e) {
+      console.warn('Lỗi load wizard:', e);
     }
   }
+
+  function updateWizardMdnsPreview() {
+    if (wizardMdnsPreview && wizardMdnsName && wizardPort) {
+      const name = (wizardMdnsName.value || 'vivu-printer').trim();
+      const port = wizardPort.value || 3232;
+      wizardMdnsPreview.textContent = `http://${name}.local:${port}`;
+    }
+  }
+
+  async function checkPdfEngine(textEl, btnDownload, inputPathEl) {
+    if (!textEl) return;
+    textEl.textContent = 'Đang kiểm tra công cụ PDF...';
+    try {
+      const res = await fetch('/api/pdf-engine/status');
+      const data = await res.json();
+      if (data.found) {
+        textEl.innerHTML = `✓ <strong>Đã phát hiện SumatraPDF:</strong> <span style="font-family:monospace; font-size:11px;">${data.path}</span>`;
+        textEl.parentElement.style.background = '#dcfce7';
+        textEl.parentElement.style.color = '#15803d';
+        if (btnDownload) btnDownload.style.display = 'none';
+        if (inputPathEl) inputPathEl.value = data.path;
+      } else {
+        textEl.innerHTML = `⚠️ <strong>Chưa có SumatraPDF</strong> (Khuyên dùng để in nhãn sắc nét và chuẩn tỷ lệ)`;
+        textEl.parentElement.style.background = '#fef3c7';
+        textEl.parentElement.style.color = '#b45309';
+        if (btnDownload) btnDownload.style.display = 'inline-block';
+        if (inputPathEl && data.currentConfigPath) inputPathEl.value = data.currentConfigPath;
+      }
+    } catch (e) {
+      textEl.textContent = 'Lỗi kiểm tra công cụ PDF';
+    }
+  }
+
+  async function downloadPdfEngine(textEl, btnDownload, inputPathEl) {
+    if (!textEl || !btnDownload) return;
+    btnDownload.disabled = true;
+    textEl.textContent = '⏳ Đang tải SumatraPDF Portable chính thức (~10MB)...';
+    try {
+      const res = await fetch('/api/pdf-engine/download', { method: 'POST' });
+      const data = await res.json();
+      if (data.status === 'success') {
+        textEl.innerHTML = `✓ <strong>Đã tải SumatraPDF thành công:</strong> <span style="font-family:monospace; font-size:11px;">${data.path}</span>`;
+        textEl.parentElement.style.background = '#dcfce7';
+        textEl.parentElement.style.color = '#15803d';
+        btnDownload.style.display = 'none';
+        if (inputPathEl) inputPathEl.value = data.path;
+      } else {
+        textEl.textContent = 'Lỗi tải: ' + (data.message || 'Thất bại');
+        btnDownload.disabled = false;
+      }
+    } catch (e) {
+      textEl.textContent = 'Lỗi kết nối tải SumatraPDF';
+      btnDownload.disabled = false;
+    }
+  }
+
+  async function completeSetupWizard() {
+    if (wizardStatus) wizardStatus.textContent = '';
+    const printerName = wizardPrinterSelect ? wizardPrinterSelect.value : '';
+    if (!printerName) {
+      if (wizardStatus) wizardStatus.textContent = 'Vui lòng chọn máy in để tiếp tục!';
+      return;
+    }
+
+    const payload = {
+      printerName,
+      mdnsName: (wizardMdnsName ? wizardMdnsName.value : 'vivu-printer').trim(),
+      port: parseInt(wizardPort ? wizardPort.value : 3232, 10) || 3232,
+      pdfViewerPath: wizardPdfViewerPath ? wizardPdfViewerPath.value.trim() : '',
+      backendSocketDeviceId: wizardDeviceId ? wizardDeviceId.value.trim() : 'vivu_printer1',
+      ghtkApiToken: wizardGhtkToken ? wizardGhtkToken.value.trim() : ''
+    };
+
+    try {
+      const res = await fetch('/api/setup/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        closeSetupWizard();
+        await fetchConfig();
+        await loadPrinters();
+        alert('🎉 Thiết lập ban đầu hoàn tất! VIVU Printer đã sẵn sàng phục vụ in.');
+      } else {
+        if (wizardStatus) wizardStatus.textContent = data.message || 'Lỗi lưu cấu hình';
+      }
+    } catch (e) {
+      if (wizardStatus) wizardStatus.textContent = 'Lỗi gửi yêu cầu thiết lập';
+    }
+  }
+
+  // --- Settings Modal Logic ---
+  async function showSettings() {
+    if (settingsModal) {
+      settingsModal.style.display = 'flex';
+      await loadSettingsData();
+      loadReturnSlipSettings();
+    }
+  }
+
   function hideSettings() {
     if (settingsModal) settingsModal.style.display = 'none';
   }
 
-  function createEnvRow(key = '', value = '', masked = true) {
-    const node = envRowTemplate.cloneNode(true);
-    node.style.display = 'flex';
-    node.removeAttribute('id');
-    const inputKey = node.querySelector('.envKey');
-    const inputVal = node.querySelector('.envValue');
-    const btnToggle = node.querySelector('.envToggleValue');
-    const btnRemove = node.querySelector('.envRemove');
-
-    inputKey.value = key || '';
-    inputVal.value = value || '';
-    inputVal.type = masked ? 'password' : 'text';
-    btnToggle.textContent = masked ? 'Hiện' : 'Ẩn';
-
-    btnToggle.addEventListener('click', () => {
-      const isMasked = inputVal.type === 'password';
-      inputVal.type = isMasked ? 'text' : 'password';
-      btnToggle.textContent = isMasked ? 'Ẩn' : 'Hiện';
-    });
-
-    btnRemove.addEventListener('click', () => {
-      node.remove();
-    });
-
-    return node;
-  }
-
-  function clearEnvList() {
-    if (envList) envList.innerHTML = '';
-  }
-
-  async function loadEnv() {
-    if (!envList || !envStatus) return;
-    envStatus.textContent = 'Đang tải...';
+  async function loadSettingsData() {
     try {
-      const res = await fetch('/settings/env');
-      const data = await res.json();
-      const content = data.content || '';
-      clearEnvList();
-      const lines = content.split(/\r?\n/);
-      for (const ln of lines) {
-        if (!ln) continue;
-        const idx = ln.indexOf('=');
-        if (idx > -1) {
-          const k = ln.slice(0, idx);
-          const v = ln.slice(idx + 1);
-          envList.appendChild(createEnvRow(k, v, true));
-        } else {
-          envList.appendChild(createEnvRow(ln, '', true));
+      const res = await fetch('/api/config');
+      const cfg = await res.json();
+      globalConfig = cfg;
+
+      // Populate printers
+      const pRes = await fetch('/printers');
+      const pData = await pRes.json();
+      const cfgPrinterSelect = document.getElementById('cfgPrinterSelect');
+      if (cfgPrinterSelect) {
+        cfgPrinterSelect.innerHTML = '';
+        for (const p of (pData.printers || [])) {
+          const opt = document.createElement('option');
+          opt.value = p.name;
+          opt.textContent = p.name + (p.default ? ' (mặc định)' : '');
+          if (p.name === (cfg.printerName || pData.currentPrinter)) opt.selected = true;
+          cfgPrinterSelect.appendChild(opt);
         }
       }
-      envStatus.textContent = 'Đã tải';
-      setTimeout(() => { envStatus.textContent = ''; }, 1500);
+
+      // Fields
+      if (document.getElementById('cfgLabelWidth')) document.getElementById('cfgLabelWidth').value = cfg.labelWidthMm || 100;
+      if (document.getElementById('cfgLabelHeight')) document.getElementById('cfgLabelHeight').value = cfg.labelHeightMm || 150;
+      if (document.getElementById('cfgPrintOrientation')) document.getElementById('cfgPrintOrientation').value = cfg.printOrientation || 'portrait';
+      if (document.getElementById('cfgPrintFit')) document.getElementById('cfgPrintFit').value = cfg.printFit || 'fit';
+      if (document.getElementById('cfgPrintPadding')) document.getElementById('cfgPrintPadding').value = cfg.printPaddingMm || 0;
+      if (document.getElementById('cfgMdnsName')) document.getElementById('cfgMdnsName').value = cfg.mdnsName || 'vivu-printer';
+      if (document.getElementById('cfgPort')) document.getElementById('cfgPort').value = cfg.port || 3232;
+      if (document.getElementById('cfgPdfViewerPath')) document.getElementById('cfgPdfViewerPath').value = cfg.pdfViewerPath || '';
+      if (document.getElementById('cfgSocketUrl')) document.getElementById('cfgSocketUrl').value = cfg.backendSocketUrl || '';
+      if (document.getElementById('cfgSocketDeviceId')) document.getElementById('cfgSocketDeviceId').value = cfg.backendSocketDeviceId || '';
+      if (document.getElementById('cfgSocketToken')) document.getElementById('cfgSocketToken').value = cfg.backendSocketToken || '';
+      if (document.getElementById('cfgGhtkToken')) document.getElementById('cfgGhtkToken').value = cfg.ghtkApiToken || '';
+      if (document.getElementById('cfgGhtkSource')) document.getElementById('cfgGhtkSource').value = cfg.ghtkClientSource || '';
+      if (document.getElementById('cfgCurrentVersion')) document.getElementById('cfgCurrentVersion').textContent = cfg.version || '1.0.1';
+
+      const accounts = Array.isArray(cfg.ghtkAccounts) ? cfg.ghtkAccounts : [];
+      const accountsInfoEl = document.getElementById('cfgGhtkAccountsInfo');
+      if (accountsInfoEl) {
+        if (accounts.length > 0) {
+          accountsInfoEl.style.display = 'block';
+          accountsInfoEl.style.color = '#059669';
+          accountsInfoEl.style.background = '#ecfdf5';
+          accountsInfoEl.style.borderColor = '#a7f3d0';
+          accountsInfoEl.innerHTML = `<strong>✔ Đa tài khoản:</strong> Đã đồng bộ <strong>${accounts.length}</strong> tài khoản GHTK từ server (${accounts.map(a => a.name).join(', ')}). Hệ thống tự động chọn đúng tài khoản khi in.`;
+        } else {
+          accountsInfoEl.style.display = 'block';
+          accountsInfoEl.style.color = '#b45309';
+          accountsInfoEl.style.background = '#fef3c7';
+          accountsInfoEl.style.borderColor = '#fde68a';
+          accountsInfoEl.innerHTML = `<em>Chưa có tài khoản GHTK nào được đồng bộ từ Backend. Kết nối socket với server để tự động đồng bộ danh sách tài khoản.</em>`;
+        }
+      }
+
+      await checkPdfEngine(document.getElementById('cfgPdfEngineText'), document.getElementById('btnCfgDownloadPdf'), document.getElementById('cfgPdfViewerPath'));
     } catch (e) {
-      envStatus.textContent = 'Lỗi tải .env';
-      setTimeout(() => { envStatus.textContent = ''; }, 1500);
+      console.warn('Lỗi load settings:', e);
     }
   }
 
-  async function saveEnv() {
-    if (!envList || !envStatus) return;
-    envStatus.textContent = 'Đang lưu...';
+  async function saveSettingsData() {
+    const noticeEl = document.getElementById('settingsNotice');
+    if (noticeEl) {
+      noticeEl.style.display = 'block';
+      noticeEl.style.background = '#e0f2fe';
+      noticeEl.style.color = '#0369a1';
+      noticeEl.textContent = 'Đang lưu cấu hình...';
+    }
+
+    const updates = {
+      printerName: document.getElementById('cfgPrinterSelect')?.value || '',
+      labelWidthMm: parseFloat(document.getElementById('cfgLabelWidth')?.value) || 100,
+      labelHeightMm: parseFloat(document.getElementById('cfgLabelHeight')?.value) || 150,
+      printOrientation: document.getElementById('cfgPrintOrientation')?.value || 'portrait',
+      printFit: document.getElementById('cfgPrintFit')?.value || 'fit',
+      printPaddingMm: parseInt(document.getElementById('cfgPrintPadding')?.value, 10) || 0,
+      mdnsName: document.getElementById('cfgMdnsName')?.value.trim() || 'vivu-printer',
+      port: parseInt(document.getElementById('cfgPort')?.value, 10) || 3232,
+      pdfViewerPath: document.getElementById('cfgPdfViewerPath')?.value.trim() || '',
+      backendSocketUrl: document.getElementById('cfgSocketUrl')?.value.trim() || '',
+      backendSocketDeviceId: document.getElementById('cfgSocketDeviceId')?.value.trim() || '',
+      backendSocketToken: document.getElementById('cfgSocketToken')?.value.trim() || '',
+      ghtkApiToken: document.getElementById('cfgGhtkToken')?.value.trim() || '',
+      ghtkClientSource: document.getElementById('cfgGhtkSource')?.value.trim() || ''
+    };
+
     try {
-      const rows = Array.from(envList.children);
-      const lines = rows.map((r) => {
-        const kEl = r.querySelector('.envKey');
-        const vEl = r.querySelector('.envValue');
-        if (!kEl) return null;
-        const k = String(kEl.value || '').trim();
-        const v = String(vEl ? vEl.value : '');
-        if (!k) return null;
-        return `${k}=${v}`;
-      }).filter(Boolean).join('\n');
-      const res = await fetch('/settings/env', {
+      const res = await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: lines })
+        body: JSON.stringify(updates)
       });
       const data = await res.json();
-      if (data && data.status === 'ok') {
-        envStatus.textContent = 'Đã lưu';
-      } else if (data && data.error) {
-        envStatus.textContent = 'Lỗi: ' + data.error;
+      if (data.status === 'success') {
+        if (noticeEl) {
+          noticeEl.style.background = '#dcfce7';
+          noticeEl.style.color = '#15803d';
+          noticeEl.textContent = '✓ Đã lưu cài đặt thành công và áp dụng ngay!';
+        }
+        await fetchConfig();
+        await loadPrinters();
+        setTimeout(() => {
+          if (noticeEl) noticeEl.style.display = 'none';
+        }, 3000);
       } else {
-        envStatus.textContent = 'Lỗi không xác định';
+        if (noticeEl) {
+          noticeEl.style.background = '#fee2e2';
+          noticeEl.style.color = '#b91c1c';
+          noticeEl.textContent = 'Lỗi: ' + (data.message || 'Không thể lưu');
+        }
       }
     } catch (e) {
-      envStatus.textContent = 'Lỗi lưu .env';
-    } finally {
-      setTimeout(() => { envStatus.textContent = ''; }, 1500);
+      if (noticeEl) {
+        noticeEl.style.background = '#fee2e2';
+        noticeEl.style.color = '#b91c1c';
+        noticeEl.textContent = 'Lỗi kết nối khi lưu';
+      }
     }
+  }
+
+  // --- Test Print Helper ---
+  async function runTestPrint(printerName, statusEl) {
+    if (statusEl) statusEl.textContent = 'Đang gửi lệnh in thử...';
+    try {
+      const res = await fetch('/api/print-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ printerName })
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        if (statusEl) {
+          statusEl.textContent = '✔ In thử thành công!';
+          statusEl.style.color = '#15803d';
+        }
+      } else {
+        if (statusEl) {
+          statusEl.textContent = '✘ Lỗi: ' + (data.message || 'Không thể in');
+          statusEl.style.color = '#b91c1c';
+        }
+      }
+    } catch (e) {
+      if (statusEl) {
+        statusEl.textContent = '✘ Lỗi kết nối máy in';
+        statusEl.style.color = '#b91c1c';
+      }
+    }
+    setTimeout(() => {
+      if (statusEl) statusEl.textContent = '';
+    }, 4000);
+  }
+
+  // --- Auto-Updater Client Logic ---
+  let updaterPollTimer = null;
+
+  async function checkUpdate(userInitiated = false) {
+    const banner = document.getElementById('updateBanner');
+    const bannerText = document.getElementById('updateBannerText');
+    const cfgStatus = document.getElementById('cfgUpdateStatus');
+    if (banner && userInitiated) {
+      banner.style.display = 'flex';
+      bannerText.textContent = 'Đang kiểm tra bản cập nhật mới trên GitHub...';
+    }
+    if (cfgStatus) cfgStatus.textContent = 'Đang kiểm tra...';
+
+    try {
+      await fetch('/api/update/check', { method: 'POST' });
+      startPollingUpdateStatus(userInitiated);
+    } catch (e) {
+      if (cfgStatus) cfgStatus.textContent = 'Lỗi gửi yêu cầu kiểm tra cập nhật';
+    }
+  }
+
+  function startPollingUpdateStatus(userInitiated = false) {
+    if (updaterPollTimer) clearInterval(updaterPollTimer);
+    let attempts = 0;
+    updaterPollTimer = setInterval(async () => {
+      attempts++;
+      try {
+        const res = await fetch('/api/update/status');
+        const data = await res.json();
+        const banner = document.getElementById('updateBanner');
+        const bannerText = document.getElementById('updateBannerText');
+        const btnDownload = document.getElementById('btnDownloadUpdate');
+        const btnInstall = document.getElementById('btnInstallUpdate');
+        const progressWrapper = document.getElementById('updateProgressWrapper');
+        const progressBar = document.getElementById('updateProgressBar');
+        const cfgStatus = document.getElementById('cfgUpdateStatus');
+
+        if (data.status === 'available') {
+          if (banner) banner.style.display = 'flex';
+          if (bannerText) bannerText.textContent = `Đã có bản cập nhật mới v${data.version}!`;
+          if (btnDownload) btnDownload.style.display = 'inline-block';
+          if (btnInstall) btnInstall.style.display = 'none';
+          if (progressWrapper) progressWrapper.style.display = 'none';
+          if (cfgStatus) cfgStatus.textContent = `Đã có bản cập nhật mới v${data.version}!`;
+          clearInterval(updaterPollTimer);
+        } else if (data.status === 'downloading') {
+          if (banner) banner.style.display = 'flex';
+          if (bannerText) bannerText.textContent = `Đang tải bản cập nhật: ${data.percent || 0}%`;
+          if (btnDownload) btnDownload.style.display = 'none';
+          if (btnInstall) btnInstall.style.display = 'none';
+          if (progressWrapper) progressWrapper.style.display = 'inline-block';
+          if (progressBar) progressBar.style.width = `${data.percent || 0}%`;
+          if (cfgStatus) cfgStatus.textContent = `Đang tải: ${data.percent || 0}%`;
+        } else if (data.status === 'downloaded') {
+          if (banner) banner.style.display = 'flex';
+          if (bannerText) bannerText.textContent = `Bản cập nhật v${data.version} đã tải xong!`;
+          if (btnDownload) btnDownload.style.display = 'none';
+          if (btnInstall) btnInstall.style.display = 'inline-block';
+          if (progressWrapper) progressWrapper.style.display = 'none';
+          if (cfgStatus) cfgStatus.textContent = `Bản cập nhật v${data.version} đã sẵn sàng cài đặt.`;
+          clearInterval(updaterPollTimer);
+        } else if (data.status === 'not-available') {
+          if (userInitiated) {
+            if (bannerText) bannerText.textContent = data.message || 'Bạn đang sử dụng phiên bản mới nhất.';
+            setTimeout(() => { if (banner) banner.style.display = 'none'; }, 4000);
+          }
+          if (cfgStatus) cfgStatus.textContent = data.message || 'Bạn đang ở phiên bản mới nhất.';
+          clearInterval(updaterPollTimer);
+        } else if (data.status === 'error') {
+          if (bannerText) bannerText.textContent = 'Lỗi cập nhật: ' + data.message;
+          if (cfgStatus) cfgStatus.textContent = 'Lỗi cập nhật: ' + data.message;
+          clearInterval(updaterPollTimer);
+        }
+
+        if (attempts > 30) {
+          clearInterval(updaterPollTimer);
+        }
+      } catch (e) {
+        clearInterval(updaterPollTimer);
+      }
+    }, 2000);
+  }
+
+  async function downloadUpdate() {
+    const bannerText = document.getElementById('updateBannerText');
+    const btnDownload = document.getElementById('btnDownloadUpdate');
+    const progressWrapper = document.getElementById('updateProgressWrapper');
+    if (bannerText) bannerText.textContent = 'Bắt đầu tải bản cập nhật...';
+    if (btnDownload) btnDownload.style.display = 'none';
+    if (progressWrapper) progressWrapper.style.display = 'inline-block';
+    try {
+      await fetch('/api/update/download', { method: 'POST' });
+      startPollingUpdateStatus(true);
+    } catch (e) {
+      if (bannerText) bannerText.textContent = 'Lỗi khi bắt đầu tải bản cập nhật';
+    }
+  }
+
+  async function installUpdate() {
+    const bannerText = document.getElementById('updateBannerText');
+    if (bannerText) bannerText.textContent = 'Đang khởi động lại ứng dụng để áp dụng bản cập nhật...';
+    try {
+      await fetch('/api/update/install', { method: 'POST' });
+    } catch (e) {}
   }
 
   function updateFontLabel(v) {
@@ -415,8 +889,11 @@ function bindEvents() {
       sizeSubtitle: Number(document.getElementById('sizeSubtitle').value || 15),
       sizeContent: Number(document.getElementById('sizeContent').value || 22),
       sizeReason: Number(document.getElementById('sizeReason').value || 19),
-      sizeQr: Number(document.getElementById('sizeQr').value || 200)
+      sizeQr: Number(document.getElementById('sizeQr').value || 200),
+      paddingLeft: Number(document.getElementById('paddingLeft')?.value ?? 70),
+      paddingRight: Number(document.getElementById('paddingRight')?.value ?? 150)
     };
+    saveReturnSlipSettings();
 
     try {
       const res = await fetch('/settings/preview-return-slip', {
@@ -453,8 +930,11 @@ function bindEvents() {
       sizeSubtitle: Number(document.getElementById('sizeSubtitle').value || 15),
       sizeContent: Number(document.getElementById('sizeContent').value || 22),
       sizeReason: Number(document.getElementById('sizeReason').value || 19),
-      sizeQr: Number(document.getElementById('sizeQr').value || 200)
+      sizeQr: Number(document.getElementById('sizeQr').value || 200),
+      paddingLeft: Number(document.getElementById('paddingLeft')?.value ?? 70),
+      paddingRight: Number(document.getElementById('paddingRight')?.value ?? 150)
     };
+    saveReturnSlipSettings();
 
     // Request HTML then open in new window as blob URL
     previewStatus.textContent = 'Đang mở cửa sổ preview...';
@@ -557,11 +1037,86 @@ function bindEvents() {
   // attach listeners
   if (btnSettings) btnSettings.addEventListener('click', showSettings);
   if (btnCloseSettings) btnCloseSettings.addEventListener('click', hideSettings);
-  if (btnLoadEnv) btnLoadEnv.addEventListener('click', loadEnv);
-  if (btnSaveEnv) btnSaveEnv.addEventListener('click', saveEnv);
-  if (btnAddEnvVar) btnAddEnvVar.addEventListener('click', () => {
-    if (envList) envList.appendChild(createEnvRow('', '', true));
+
+  const btnSaveConfig = document.getElementById('btnSaveConfig');
+  if (btnSaveConfig) btnSaveConfig.addEventListener('click', saveSettingsData);
+
+  const btnOpenSetupWizard = document.getElementById('btnOpenSetupWizard');
+  if (btnOpenSetupWizard) btnOpenSetupWizard.addEventListener('click', openSetupWizard);
+
+  const btnReopenWizard = document.getElementById('btnReopenWizard');
+  if (btnReopenWizard) btnReopenWizard.addEventListener('click', () => {
+    hideSettings();
+    openSetupWizard();
   });
+
+  const btnCompleteSetup = document.getElementById('btnCompleteSetup');
+  if (btnCompleteSetup) btnCompleteSetup.addEventListener('click', completeSetupWizard);
+
+  const btnWizardRefreshPrinters = document.getElementById('btnWizardRefreshPrinters');
+  if (btnWizardRefreshPrinters) btnWizardRefreshPrinters.addEventListener('click', loadWizardData);
+
+  const btnWizardTestPrint = document.getElementById('btnWizardTestPrint');
+  if (btnWizardTestPrint) {
+    btnWizardTestPrint.addEventListener('click', () => {
+      runTestPrint(wizardPrinterSelect?.value, wizardPrinterStatus);
+    });
+  }
+
+  const btnSettingsTestPrint = document.getElementById('btnSettingsTestPrint');
+  if (btnSettingsTestPrint) {
+    btnSettingsTestPrint.addEventListener('click', () => {
+      const p = document.getElementById('cfgPrinterSelect')?.value;
+      const notice = document.getElementById('settingsNotice');
+      if (notice) notice.style.display = 'block';
+      runTestPrint(p, notice);
+    });
+  }
+
+  const btnQuickTestPrint = document.getElementById('btnQuickTestPrint');
+  if (btnQuickTestPrint) {
+    btnQuickTestPrint.addEventListener('click', () => {
+      const p = document.getElementById('printerSelect')?.value;
+      runTestPrint(p, document.getElementById('printerStatus'));
+    });
+  }
+
+  if (btnWizardDownloadPdf) {
+    btnWizardDownloadPdf.addEventListener('click', () => {
+      downloadPdfEngine(wizardPdfEngineText, btnWizardDownloadPdf, wizardPdfViewerPath);
+    });
+  }
+
+  const btnCfgDownloadPdf = document.getElementById('btnCfgDownloadPdf');
+  if (btnCfgDownloadPdf) {
+    btnCfgDownloadPdf.addEventListener('click', () => {
+      downloadPdfEngine(document.getElementById('cfgPdfEngineText'), btnCfgDownloadPdf, document.getElementById('cfgPdfViewerPath'));
+    });
+  }
+
+  if (wizardMdnsName) wizardMdnsName.addEventListener('input', updateWizardMdnsPreview);
+  if (wizardPort) wizardPort.addEventListener('input', updateWizardMdnsPreview);
+
+  // Update handlers
+  const btnCheckUpdateHeader = document.getElementById('btnCheckUpdateHeader');
+  if (btnCheckUpdateHeader) btnCheckUpdateHeader.addEventListener('click', () => checkUpdate(true));
+
+  const btnSettingsCheckUpdate = document.getElementById('btnSettingsCheckUpdate');
+  if (btnSettingsCheckUpdate) btnSettingsCheckUpdate.addEventListener('click', () => checkUpdate(true));
+
+  const btnDownloadUpdate = document.getElementById('btnDownloadUpdate');
+  if (btnDownloadUpdate) btnDownloadUpdate.addEventListener('click', downloadUpdate);
+
+  const btnInstallUpdate = document.getElementById('btnInstallUpdate');
+  if (btnInstallUpdate) btnInstallUpdate.addEventListener('click', installUpdate);
+
+  const btnCloseUpdateBanner = document.getElementById('btnCloseUpdateBanner');
+  if (btnCloseUpdateBanner) {
+    btnCloseUpdateBanner.addEventListener('click', () => {
+      const banner = document.getElementById('updateBanner');
+      if (banner) banner.style.display = 'none';
+    });
+  }
   if (btnRenderPreview) btnRenderPreview.addEventListener('click', renderPreview);
   if (btnOpenPreviewWindow) btnOpenPreviewWindow.addEventListener('click', openPreviewWindow);
   if (fontScale) {
@@ -578,8 +1133,16 @@ function bindEvents() {
     });
     updateShipFontLabel(shipFontScale.value || 100);
   }
+  const padLeftEl = document.getElementById('paddingLeft');
+  const padRightEl = document.getElementById('paddingRight');
+  if (padLeftEl) padLeftEl.addEventListener('change', saveReturnSlipSettings);
+  if (padRightEl) padRightEl.addEventListener('change', saveReturnSlipSettings);
+  loadReturnSlipSettings();
 }
 
 bindEvents();
 fetchConfig();
 loadPrinters();
+
+// Tự động cập nhật trạng thái kết nối backend mỗi 5 giây
+setInterval(fetchConfig, 5000);

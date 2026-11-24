@@ -9,26 +9,44 @@ files:
   - filter:
       - main.js
       - server.js
+      - configManager.js
+      - mdnsService.js
       - returnSlipPrint.js
       - otherCarrierShipPrint.js
+      - ghtkLabelStamper.js
       - public/**/*
+      - package.json
       - node_modules/**/*
       - '!node_modules/electron/**/*'
       - '!node_modules/electron-builder/**/*'
       - '!node_modules/@electron/packager/**/*'
       - '!node_modules/pkg/**/*'
+      - '!node_modules/pkg-fetch/**/*'
 asarUnpack:
   - server.js
+  - configManager.js
+  - mdnsService.js
   - returnSlipPrint.js
   - otherCarrierShipPrint.js
+  - ghtkLabelStamper.js
+  - package.json
   - public/**/*
   - node_modules/**/*
+  - '!node_modules/electron/**/*'
+  - '!node_modules/electron-builder/**/*'
+  - '!node_modules/@electron/packager/**/*'
+  - '!node_modules/pkg/**/*'
+  - '!node_modules/pkg-fetch/**/*'
+publish:
+  - provider: github
+    owner: khoatrandang32
+    repo: vivu_printer
 win:
   target:
     - target: nsis
       arch:
         - x64
-  icon: public/icon.png
+  icon: public/icon.ico
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true

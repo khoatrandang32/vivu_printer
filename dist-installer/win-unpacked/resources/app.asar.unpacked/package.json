@@ -1,0 +1,28 @@
+{
+  "name": "vivu-printer",
+  "version": "1.0.1",
+  "description": "NodeJS Print Server cho máy in nhiệt HPRT N43 (TSPL) trên Windows",
+  "main": "main.js",
+  "private": true,
+  "dependencies": {
+    "@pdf-lib/fontkit": "^1.1.1",
+    "bonjour-service": "^1.4.4",
+    "dotenv": "^16.4.5",
+    "electron-updater": "^6.8.11",
+    "express": "^4.19.2",
+    "pdf-lib": "^1.17.1",
+    "puppeteer-core": "^25.1.0",
+    "qrcode": "^1.5.4",
+    "socket.io-client": "^4.8.1"
+  },
+  "author": "",
+  "license": "MIT",
+  "pkg": {
+    "assets": [
+      "public/**/*",
+      "returnSlipPrint.js",
+      "otherCarrierShipPrint.js",
+      "ghtkLabelStamper.js"
+    ]
+  }
+}

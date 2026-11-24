@@ -21,14 +21,43 @@
   </style>
 </head>
 <body>
+  <!-- Update Notification Banner -->
+  <div id="updateBanner" style="display:none; background:#1e40af; color:#fff; padding:10px 16px; align-items:center; justify-content:space-between; font-size:13px; box-shadow:0 2px 4px rgba(0,0,0,0.1);">
+    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+      <span style="font-weight:bold;">🚀 Cập nhật ứng dụng:</span>
+      <span id="updateBannerText">Đang kiểm tra...</span>
+      <div id="updateProgressWrapper" style="display:none; width:160px; background:rgba(255,255,255,0.25); border-radius:4px; height:8px; overflow:hidden;">
+        <div id="updateProgressBar" style="width:0%; background:#10b981; height:100%; transition:width 0.2s;"></div>
+      </div>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <button id="btnDownloadUpdate" style="display:none; background:#10b981; padding:4px 12px; font-size:12px; border:none; border-radius:4px; color:#fff; cursor:pointer;">Tải bản cập nhật</button>
+      <button id="btnInstallUpdate" style="display:none; background:#f59e0b; padding:4px 12px; font-size:12px; border:none; border-radius:4px; color:#fff; cursor:pointer; font-weight:600;">Khởi động lại & Cập nhật</button>
+      <button id="btnCloseUpdateBanner" style="background:transparent; border:none; color:#fff; font-size:16px; cursor:pointer; line-height:1;">✕</button>
+    </div>
+  </div>
+
   <header>
-    <strong>VIVU Printer</strong>
-    <span id="config" style="margin-left:8px; font-size: 12px;"></span>
-    <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
-      <label for="printerSelect" style="margin:0; font-size:12px;">Chọn máy in</label>
-      <select id="printerSelect" style="width:auto; min-width:200px;"></select>
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <strong>VIVU Printer</strong>
+        <span id="appVersionBadge" style="background:#1e293b; color:#cbd5e1; font-size:11px; padding:2px 6px; border-radius:4px;">v1.0.1</span>
+        <span id="mdnsBadge" style="background:#0284c7; color:#fff; font-size:11px; padding:2px 8px; border-radius:10px; font-weight:500;" title="Tên thiết bị trong mạng LAN">vivu-printer.local</span>
+        <span id="config" style="font-size: 12px; opacity:0.9;"></span>
+        <span id="socketBadge" style="font-size:11px; padding:3px 8px; border-radius:10px; font-weight:600; display:inline-block;"></span>
+        <button id="btnReconnect" style="padding:3px 8px; font-size:11px; background:#f59e0b; color:#fff; border:none; border-radius:6px; cursor:pointer; display:none;">Kết nối lại</button>
+      </div>
+      <div style="display:flex; gap:6px;">
+        <button id="btnCheckUpdateHeader" style="background:#374151; font-size:12px; padding:6px 10px;">Kiểm tra cập nhật</button>
+        <button id="btnOpenSetupWizard" style="background:#8b5cf6; font-size:12px; padding:6px 10px;">Thiết lập ban đầu</button>
+      </div>
+    </div>
+    <div style="margin-top:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <label for="printerSelect" style="margin:0; font-size:12px;">Chọn máy in:</label>
+      <select id="printerSelect" style="width:auto; min-width:220px;"></select>
       <button id="btnRefreshPrinters" style="background:#10b981;">Làm mới</button>
-      <button id="btnSettings" style="background:#6b7280;">Cài đặt</button>
+      <button id="btnQuickTestPrint" style="background:#6366f1;">In thử</button>
+      <button id="btnSettings" style="background:#4b5563;">Cài đặt</button>
       <span id="printerStatus" class="mono" style="font-size:12px;"></span>
     </div>
   </header>
@@ -75,6 +104,7 @@ PRINT 1</textarea>
       <textarea id="vtpList" rows="6" placeholder="https://viettelpost.com.vn/...&#10;https://viettelpost.com.vn/..."></textarea>
       <div class="row" style="margin-top:8px;">
         <button id="btnPrintVtp">Gửi /print-viettelpost</button>
+        <button id="btnPreviewVtp" type="button" style="background:#10b981;">Xem trước</button>
       </div>
       <div class="status mono" id="statusVtp"></div>
     </section>
@@ -108,40 +138,221 @@ PRINT 1</textarea>
     <span class="mono">Sử dụng API /print và /print-json</span>
   </footer>
 
-  <!-- Settings modal -->
-  <div id="settingsModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.35); z-index:1200; align-items:center; justify-content:center;">
-    <div style="width:980px; max-width:98%; max-height:92%; overflow:auto; background:#fff; border-radius:8px; padding:16px; box-shadow:0 10px 30px rgba(2,6,23,0.2);">
-      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;">
-        <h2 style="margin:0; font-size:18px;">Cài đặt</h2>
-        <div style="display:flex; gap:8px; align-items:center;">
-          <button id="btnCloseSettings" style="background:#ef4444;">Đóng</button>
+  <!-- Setup Wizard Modal (Hiển thị khi chạy lần đầu hoặc khi bấm Thiết lập ban đầu) -->
+  <div id="setupWizardModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.85); z-index:2000; align-items:center; justify-content:center; backdrop-filter:blur(4px);">
+    <div style="width:720px; max-width:95%; max-height:92%; overflow-y:auto; background:#fff; border-radius:12px; padding:24px; box-shadow:0 20px 40px rgba(0,0,0,0.3);">
+      <div style="text-align:center; margin-bottom:20px;">
+        <h2 style="margin:0 0 6px; font-size:22px; color:#1e293b;">👋 Chào mừng bạn đến với VIVU Printer</h2>
+        <p style="margin:0; font-size:14px; color:#64748b;">Thiết lập các thông số cơ bản để hệ thống sẵn sàng in</p>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:16px;">
+        <!-- Bước 1: Chọn máy in -->
+        <div style="border:1px solid #e2e8f0; border-radius:8px; padding:16px; background:#f8fafc;">
+          <div style="font-weight:600; font-size:15px; color:#0f172a; margin-bottom:4px;">1. Chọn Máy in nhiệt kết nối với máy tính (PRINTER_NAME)</div>
+          <div style="font-size:12px; color:#64748b; margin-bottom:10px;">Hệ thống tự động phát hiện các máy in có sẵn trên máy tính của bạn:</div>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <select id="wizardPrinterSelect" style="flex:1; padding:8px; font-size:14px;"></select>
+            <button id="btnWizardRefreshPrinters" type="button" style="background:#10b981; padding:8px 12px; white-space:nowrap;">Làm mới</button>
+            <button id="btnWizardTestPrint" type="button" style="background:#8b5cf6; padding:8px 12px; white-space:nowrap;">In Thử Ngay</button>
+          </div>
+          <div id="wizardPrinterStatus" style="font-size:12px; margin-top:6px; color:#475569;"></div>
+        </div>
+
+        <!-- Bước 2: Tên thiết bị mDNS -->
+        <div style="border:1px solid #e2e8f0; border-radius:8px; padding:16px; background:#f8fafc;">
+          <div style="font-weight:600; font-size:15px; color:#0f172a; margin-bottom:4px;">2. Tên thiết bị trong mạng nội bộ (MDNS_NAME)</div>
+          <div style="font-size:12px; color:#64748b; margin-bottom:8px;">Các thiết bị khác trong mạng LAN có thể kết nối tới máy in qua địa chỉ: <code id="wizardMdnsPreview" style="background:#e2e8f0; padding:2px 6px; border-radius:4px; font-weight:bold; color:#2563eb;">http://vivu-printer.local:3232</code></div>
+          <div style="display:grid; grid-template-columns: 2fr 1fr; gap:12px;">
+            <div>
+              <label style="font-size:12px; color:#475569; margin-bottom:4px; display:block;">Tên thiết bị (MDNS_NAME)</label>
+              <input id="wizardMdnsName" value="vivu-printer" placeholder="vivu-printer" style="padding:8px;" />
+            </div>
+            <div>
+              <label style="font-size:12px; color:#475569; margin-bottom:4px; display:block;">Cổng (PORT)</label>
+              <input id="wizardPort" type="number" value="3232" placeholder="3232" style="padding:8px;" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Bước 3: Công cụ in PDF -->
+        <div style="border:1px solid #e2e8f0; border-radius:8px; padding:16px; background:#f8fafc;">
+          <div style="font-weight:600; font-size:15px; color:#0f172a; margin-bottom:4px;">3. Công cụ in PDF (SumatraPDF)</div>
+          <div style="font-size:12px; color:#64748b; margin-bottom:10px;">Tự động nhận diện công cụ in PDF sắc nét, đúng khổ tem (không cần cấu hình thủ công):</div>
+          <div id="wizardPdfEngineStatus" style="padding:10px; border-radius:6px; background:#e0f2fe; color:#0369a1; font-size:13px; display:flex; align-items:center; justify-content:space-between; gap:10px;">
+            <span id="wizardPdfEngineText">Đang kiểm tra công cụ PDF...</span>
+            <button id="btnWizardDownloadPdf" type="button" style="background:#0284c7; padding:6px 12px; font-size:12px; white-space:nowrap; display:none; color:#fff; border:none; border-radius:4px; cursor:pointer;">Tải SumatraPDF Portable (~10MB)</button>
+          </div>
+          <div style="margin-top:8px;">
+            <details style="font-size:12px; color:#64748b; cursor:pointer;">
+              <summary>Tùy chỉnh đường dẫn PDF Viewer thủ công nếu muốn</summary>
+              <div style="margin-top:6px;">
+                <input id="wizardPdfViewerPath" placeholder="C:\Users\...\SumatraPDF.exe" style="padding:6px; font-size:12px;" />
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <!-- Bước 4: Backend Socket & GHTK (Tùy chọn) -->
+        <div style="border:1px solid #e2e8f0; border-radius:8px; padding:16px; background:#f8fafc;">
+          <div style="font-weight:600; font-size:15px; color:#0f172a; margin-bottom:4px;">4. Kết nối Máy chủ & GHTK (Tùy chọn)</div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+            <div>
+              <label style="font-size:12px; color:#475569; margin-bottom:4px; display:block;">Mã thiết bị (Socket Device ID)</label>
+              <input id="wizardDeviceId" value="vivu_printer1" placeholder="vivu_printer1" style="padding:8px;" />
+            </div>
+            <div>
+              <label style="font-size:12px; color:#475569; margin-bottom:4px; display:block;">GHTK Token</label>
+              <input id="wizardGhtkToken" placeholder="Nhập token GHTK nếu có" style="padding:8px;" />
+            </div>
+          </div>
         </div>
       </div>
 
-      <div style="display:grid; grid-template-columns: 1fr 480px; gap:12px;">
-        <div>
-          <h3 style="margin-top:0;">Biến môi trường (.env)</h3>
+      <div style="margin-top:24px; display:flex; justify-content:flex-end; gap:12px; align-items:center;">
+        <span id="wizardStatus" style="font-size:13px; color:#ef4444; font-weight:500;"></span>
+        <button id="btnCompleteSetup" type="button" style="background:#2563eb; padding:12px 24px; font-size:15px; font-weight:600; border-radius:8px; color:#fff; border:none; cursor:pointer;">🚀 Hoàn tất & Bắt đầu sử dụng</button>
+      </div>
+    </div>
+  </div>
 
-          <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
-            <button id="btnLoadEnv">Tải .env</button>
-            <button id="btnSaveEnv" style="background:#10b981;">Lưu .env</button>
-            <button id="btnAddEnvVar" type="button">+ Thêm biến môi trường mới</button>
-            <span id="envStatus" class="mono" style="margin-left:8px;"></span>
+  <!-- Settings modal -->
+  <div id="settingsModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:1200; align-items:center; justify-content:center;">
+    <div style="width:1050px; max-width:98%; max-height:92%; overflow:auto; background:#fff; border-radius:10px; padding:18px; box-shadow:0 10px 30px rgba(2,6,23,0.2);">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; border-bottom:1px solid #e5e7eb; padding-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <h2 style="margin:0; font-size:18px;">⚙️ Cài đặt Ứng dụng</h2>
+          <span style="font-size:12px; color:#6b7280;">(Lưu trữ an toàn tại config.json - Không cần dùng .env)</span>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button id="btnReopenWizard" style="background:#8b5cf6; padding:6px 12px; font-size:13px;">Mở Setup Wizard</button>
+          <button id="btnSaveConfig" style="background:#10b981; padding:6px 16px; font-size:13px; font-weight:600;">Lưu cài đặt</button>
+          <button id="btnCloseSettings" style="background:#ef4444; padding:6px 12px; font-size:13px;">Đóng</button>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr 480px; gap:16px;">
+        <!-- Left Column: Settings Form -->
+        <div style="display:flex; flex-direction:column; gap:14px; overflow-y:auto; max-height:75vh; padding-right:6px;">
+          <div id="settingsNotice" style="display:none; padding:8px 12px; border-radius:6px; font-size:13px; font-weight:500;"></div>
+
+          <!-- Section 1: Máy in & Khổ in -->
+          <div style="border:1px solid #e5e7eb; border-radius:8px; padding:12px; background:#f9fafb;">
+            <h4 style="margin:0 0 8px; font-size:14px; color:#1f2937;">🖨️ Máy in & Khổ giấy in</h4>
+            <div style="display:grid; grid-template-columns: 2fr 1fr; gap:8px; margin-bottom:8px;">
+              <div>
+                <label style="font-size:12px; color:#4b5563; margin-bottom:2px; display:block;">Máy in mặc định</label>
+                <select id="cfgPrinterSelect" style="padding:6px;"></select>
+              </div>
+              <div style="display:flex; align-items:flex-end;">
+                <button id="btnSettingsTestPrint" type="button" style="background:#6366f1; width:100%; padding:6px;">In thử nhãn</button>
+              </div>
+            </div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:8px;">
+              <div>
+                <label style="font-size:12px; color:#4b5563; margin-bottom:2px; display:block;">Khổ rộng (LABEL_WIDTH_MM)</label>
+                <input id="cfgLabelWidth" type="number" value="100" style="padding:6px;" />
+              </div>
+              <div>
+                <label style="font-size:12px; color:#4b5563; margin-bottom:2px; display:block;">Khổ cao (LABEL_HEIGHT_MM)</label>
+                <input id="cfgLabelHeight" type="number" value="150" style="padding:6px;" />
+              </div>
+            </div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
+              <div>
+                <label style="font-size:12px; color:#4b5563; margin-bottom:2px; display:block;">Hướng in (PRINT_ORIENTATION)</label>
+                <select id="cfgPrintOrientation" style="padding:6px;">
+                  <option value="portrait">Dọc (portrait)</option>
+                  <option value="landscape">Ngang (landscape)</option>
+                </select>
+              </div>
+              <div>
+                <label style="font-size:12px; color:#4b5563; margin-bottom:2px; display:block;">Canh tỷ lệ (PRINT_FIT)</label>
+                <select id="cfgPrintFit" style="padding:6px;">
+                  <option value="fit">Vừa trang (fit)</option>
+                  <option value="shrink">Thu nhỏ (shrink)</option>
+                  <option value="noscale">Giữ nguyên (noscale)</option>
+                </select>
+              </div>
+              <div>
+                <label style="font-size:12px; color:#4b5563; margin-bottom:2px; display:block;">Lề (PRINT_PADDING_MM)</label>
+                <input id="cfgPrintPadding" type="number" value="0" style="padding:6px;" />
+              </div>
+            </div>
           </div>
 
-          <div id="envList" style="display:flex; flex-direction:column; gap:8px;">
-            <!-- Rows inserted here -->
+          <!-- Section 2: Mạng LAN & mDNS -->
+          <div style="border:1px solid #e5e7eb; border-radius:8px; padding:12px; background:#f9fafb;">
+            <h4 style="margin:0 0 8px; font-size:14px; color:#1f2937;">🌐 Mạng nội bộ & Tên thiết bị (mDNS)</h4>
+            <div style="display:grid; grid-template-columns: 2fr 1fr; gap:8px;">
+              <div>
+                <label style="font-size:12px; color:#4b5563; margin-bottom:2px; display:block;">Tên local thiết bị (MDNS_NAME)</label>
+                <input id="cfgMdnsName" value="vivu-printer" placeholder="vivu-printer" style="padding:6px;" />
+              </div>
+              <div>
+                <label style="font-size:12px; color:#4b5563; margin-bottom:2px; display:block;">Cổng web (PORT)</label>
+                <input id="cfgPort" type="number" value="3232" style="padding:6px;" />
+              </div>
+            </div>
           </div>
 
-          <!-- Template for env row (hidden) -->
-          <div id="envRowTemplate" style="display:none; gap:8px; align-items:center;">
-            <input class="envKey" placeholder="TÊN_BIẾN" style="width:40%; padding:6px; font-family:ui-monospace,monospace;" />
-            <input class="envValue" placeholder="giá trị" style="width:45%; padding:6px; font-family:ui-monospace,monospace;" />
-            <button class="envToggleValue" title="Hiện/ẩn giá trị" type="button">Hiện</button>
-            <button class="envRemove" title="Xóa" type="button" style="background:#ef4444;">Xóa</button>
+          <!-- Section 3: Công cụ in PDF -->
+          <div style="border:1px solid #e5e7eb; border-radius:8px; padding:12px; background:#f9fafb;">
+            <h4 style="margin:0 0 8px; font-size:14px; color:#1f2937;">📄 Công cụ in PDF (SumatraPDF)</h4>
+            <div id="cfgPdfEngineStatus" style="padding:8px 10px; border-radius:6px; background:#e0f2fe; color:#0369a1; font-size:12px; margin-bottom:8px; display:flex; align-items:center; justify-content:space-between;">
+              <span id="cfgPdfEngineText">Đang kiểm tra...</span>
+              <button id="btnCfgDownloadPdf" type="button" style="background:#0284c7; padding:4px 10px; font-size:11px; color:#fff; border:none; border-radius:4px; cursor:pointer;">Tải SumatraPDF Portable</button>
+            </div>
+            <div>
+              <label style="font-size:12px; color:#4b5563; margin-bottom:2px; display:block;">Đường dẫn tùy chỉnh (PDF_VIEWER_PATH)</label>
+              <input id="cfgPdfViewerPath" placeholder="Tự động phát hiện hoặc chọn đường dẫn SumatraPDF.exe" style="padding:6px;" />
+            </div>
+          </div>
+
+          <!-- Section 4: Socket Backend & GHTK -->
+          <div style="border:1px solid #e5e7eb; border-radius:8px; padding:12px; background:#f9fafb;">
+            <h4 style="margin:0 0 8px; font-size:14px; color:#1f2937;">🔌 Kết nối Socket Backend & GHTK</h4>
+            <div style="margin-bottom:8px;">
+              <label style="font-size:12px; color:#4b5563; margin-bottom:2px; display:block;">Backend Socket URL</label>
+              <input id="cfgSocketUrl" value="https://api.vaycuoivivu.com" style="padding:6px;" />
+            </div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:8px;">
+              <div>
+                <label style="font-size:12px; color:#4b5563; margin-bottom:2px; display:block;">Mã thiết bị (Device ID)</label>
+                <input id="cfgSocketDeviceId" value="vivu_printer1" style="padding:6px;" />
+              </div>
+              <div>
+                <label style="font-size:12px; color:#4b5563; margin-bottom:2px; display:block;">Token kết nối Socket</label>
+                <input id="cfgSocketToken" type="password" placeholder="Token socket nếu có" style="padding:6px;" />
+              </div>
+            </div>
+            <div style="display:grid; grid-template-columns: 2fr 1fr; gap:8px;">
+              <div>
+                <label style="font-size:12px; color:#4b5563; margin-bottom:2px; display:block;">GHTK API Token (Dự phòng)</label>
+                <input id="cfgGhtkToken" type="password" placeholder="Token API GHTK dự phòng" style="padding:6px;" />
+              </div>
+              <div>
+                <label style="font-size:12px; color:#4b5563; margin-bottom:2px; display:block;">Mã KH (Client Source)</label>
+                <input id="cfgGhtkSource" placeholder="S387097" style="padding:6px;" />
+              </div>
+            </div>
+            <div id="cfgGhtkAccountsInfo" style="margin-top:8px; font-size:12px; color:#059669; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:6px; padding:6px 10px; display:none;"></div>
+          </div>
+
+          <!-- Section 5: Cập nhật ứng dụng -->
+          <div style="border:1px solid #e5e7eb; border-radius:8px; padding:12px; background:#f9fafb;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <h4 style="margin:0; font-size:14px; color:#1f2937;">🚀 Cập nhật ứng dụng tự động</h4>
+                <div style="font-size:12px; color:#6b7280; margin-top:2px;">Phiên bản hiện tại: <span id="cfgCurrentVersion">1.0.1</span></div>
+              </div>
+              <button id="btnSettingsCheckUpdate" type="button" style="background:#2563eb; padding:6px 12px; font-size:12px;">Kiểm tra bản mới</button>
+            </div>
+            <div id="cfgUpdateStatus" style="font-size:12px; margin-top:6px; color:#4b5563;"></div>
           </div>
         </div>
 
+        <!-- Right Column: Previews -->
         <div>
           <h3 style="margin-top:0;">Preview phiếu trả hàng</h3>
           <label style="display:block; font-size:13px; color:#444; margin-bottom:6px;">Dữ liệu phiếu (JSON)</label>
@@ -182,6 +393,15 @@ PRINT 1</textarea>
               <label style="font-size:13px; color:#444;">Tỉ lệ toàn cục preview (%)</label>
               <input id="fontScale" type="range" min="50" max="200" value="100" style="width:100%" />
               <div style="font-size:12px; margin-top:4px;">Tỉ lệ: <span id="fontScaleLabel">100%</span></div>
+            </div>
+
+            <div>
+              <label style="font-size:13px; color:#444;">Padding lề trái (px)</label>
+              <input id="paddingLeft" type="number" min="0" max="500" value="70" style="width:100%; padding:6px;" />
+            </div>
+            <div>
+              <label style="font-size:13px; color:#444;">Padding lề phải (px)</label>
+              <input id="paddingRight" type="number" min="0" max="500" value="150" style="width:100%; padding:6px;" />
             </div>
           </div>
 

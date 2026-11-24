@@ -4,8 +4,11 @@ x64:
     - '!dist-installer{,/**/*}'
     - main.js
     - server.js
+    - configManager.js
+    - mdnsService.js
     - returnSlipPrint.js
     - otherCarrierShipPrint.js
+    - ghtkLabelStamper.js
     - public/**/*
     - package.json
     - '!**/node_modules/**'
@@ -26,8 +29,11 @@ x64:
     - '**/*'
     - main.js
     - server.js
+    - configManager.js
+    - mdnsService.js
     - returnSlipPrint.js
     - otherCarrierShipPrint.js
+    - ghtkLabelStamper.js
     - public/**/*
     - package.json
     - node_modules/**/*
@@ -111,8 +117,8 @@ nsis:
       !insertmacro MUI_LANGUAGE "Vietnamese"
     !macroend
 
-    !include "/private/var/folders/7g/cg7mdld53yz6h6tcngswzkqw0000gn/T/t-9KZULJ/2-messages.nsh"
-    !include "/private/var/folders/7g/cg7mdld53yz6h6tcngswzkqw0000gn/T/t-9KZULJ/1-messages.nsh"
+    !include "/private/var/folders/7g/cg7mdld53yz6h6tcngswzkqw0000gn/T/t-DyUmTJ/1-messages.nsh"
+    !include "/private/var/folders/7g/cg7mdld53yz6h6tcngswzkqw0000gn/T/t-DyUmTJ/2-messages.nsh"
     !addplugindir /x86-unicode "/Users/khoadev/Library/Caches/electron-builder/nsis/nsis-resources-3.4.1-nsis-resources-3.4.1/plugins/x86-unicode"
 
     Var newStartMenuLink
