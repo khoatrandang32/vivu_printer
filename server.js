@@ -66,6 +66,7 @@ const { stampGhtkLabelPdf } = require('./ghtkLabelStamper');
 const cfg = configManager.get();
 let PORT = parseInt(cfg.port || process.env.PORT || '3232', 10);
 let CURRENT_PRINTER = cfg.printerName || process.env.PRINTER_NAME || 'HPRT N43';
+let SAVE_PDF_DIR = cfg.savePdfDir || process.env.SAVE_PDF_DIR || '';
 const STARTUP_TASK_NAME = process.env.STARTUP_TASK_NAME || 'VivuPrinter';
 
 function getSocketServerUrl() {
@@ -303,7 +304,7 @@ function scheduleTempDelete(filePath, delayMs = 120000) {
 }
 
 function ensureSaveDir() {
-  const dir = String(SAVE_PDF_DIR || '').trim();
+  const dir = String(SAVE_PDF_DIR || configManager.get('savePdfDir') || process.env.SAVE_PDF_DIR || '').trim();
   if (!dir) return null;
   try {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -2215,12 +2216,21 @@ const server = app.listen(PORT, () => {
   detectPrinters()
     .then((list) => {
       const def = list.find((p) => p.default);
-      if (def && !CURRENT_PRINTER) {
-        CURRENT_PRINTER = def.name;
-        console.log(`[CONFIG] Auto chọn máy in mặc định: ${CURRENT_PRINTER}`);
-      } else {
-        const names = list.map((p) => p.name).join(', ');
-        console.log(`[INFO] Máy in khả dụng: ${names || '(không phát hiện được)'}`);
+      const names = list.map((p) => p.name).join(', ');
+      console.log(`[INFO] Máy in khả dụng: ${names || '(không phát hiện được)'}`);
+
+      const exact = list.find((p) => p.name === CURRENT_PRINTER);
+      if (!exact && list.length > 0) {
+        // Tự động tìm máy in nhiệt / barcode (HPRT, N41, N43, Xprinter, v.v.)
+        const thermal = list.find((p) => /hprt|n41|n43|xprinter|tspl|pos|barcode/i.test(p.name));
+        if (thermal) {
+          CURRENT_PRINTER = thermal.name;
+          configManager.save({ printerName: CURRENT_PRINTER });
+          console.log(`[CONFIG] Tự động khớp máy in nhiệt tìm thấy: "${CURRENT_PRINTER}"`);
+        } else if (def) {
+          CURRENT_PRINTER = def.name;
+          console.log(`[CONFIG] Tự động chọn máy in mặc định hệ thống: "${CURRENT_PRINTER}"`);
+        }
       }
     })
     .catch(() => {});
