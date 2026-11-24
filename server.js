@@ -417,6 +417,12 @@ function emitSocketEvent(eventName, payload) {
 
 function normalizeGhtkPrintJobs(input) {
   let rawList = [];
+  let rootOriginal = undefined;
+  let rootPageSize = undefined;
+  if (input && typeof input === 'object' && !Array.isArray(input)) {
+    rootOriginal = input.original || input.orientation || input.printOrientation;
+    rootPageSize = input.page_size || input.pageSize || input.paperSize;
+  }
   if (Array.isArray(input)) {
     rawList = input;
   } else if (typeof input === 'string') {
@@ -439,7 +445,7 @@ function normalizeGhtkPrintJobs(input) {
     if (!item) continue;
     if (typeof item === 'string') {
       const code = item.trim();
-      if (code) jobs.push({ tracking: code });
+      if (code) jobs.push({ tracking: code, original: rootOriginal, pageSize: rootPageSize });
     } else if (typeof item === 'object') {
       const code = String(item.tracking || item.trackingOrder || item.tracking_order || item.orderCode || item.code || '').trim();
       if (code) {
@@ -449,6 +455,8 @@ function normalizeGhtkPrintJobs(input) {
           accountName: item.accountName ? String(item.accountName).trim() : undefined,
           token: item.token ? String(item.token).trim() : undefined,
           partnerCode: item.partnerCode ? String(item.partnerCode).trim() : undefined,
+          original: item.original || item.orientation || rootOriginal,
+          pageSize: item.pageSize || item.page_size || rootPageSize,
         });
       }
     }
@@ -1264,11 +1272,16 @@ app.post('/print', (req, res) => {
   }
 });
 
-function fetchGhtkPdf(tracking, token, clientSource, accountName) {
+function fetchGhtkPdf(tracking, token, clientSource, accountName, printOptions = {}) {
   return new Promise((resolve, reject) => {
+    const currentCfg = configManager.get();
+    const orient = String(printOptions.original || printOptions.orientation || currentCfg.printOrientation || 'portrait').toLowerCase();
+    const original = orient === 'landscape' ? 'landscape' : 'portrait';
+    const pageSize = String(printOptions.page_size || printOptions.pageSize || currentCfg.ghtkPageSize || 'A6').toUpperCase();
+
     const options = {
       hostname: 'services.giaohangtietkiem.vn',
-      path: `/services/label/${encodeURIComponent(tracking)}?original=landscape&page_size=a6`,
+      path: `/services/label/${encodeURIComponent(tracking)}?original=${original}&page_size=${pageSize}`,
       method: 'GET',
       headers: {
         'Token': token,
@@ -1374,6 +1387,10 @@ async function printGhtkLabels(input, source) {
     let token = job.token || '';
     let clientSource = job.partnerCode || '';
     let accountName = job.accountName || '';
+    const printOptions = {
+      original: job.original,
+      pageSize: job.pageSize,
+    };
 
     // 1. Nếu chưa có token (in trực tiếp qua LAN HTTP / UI thủ công), thử tra cứu từ Backend
     if (!token) {
@@ -1393,7 +1410,7 @@ async function printGhtkLabels(input, source) {
       for (const acc of syncedGhtkAccounts) {
         if (!acc.token) continue;
         try {
-          preFetchedResult = await fetchGhtkPdf(code, acc.token, acc.partnerCode || '', acc.name || '');
+          preFetchedResult = await fetchGhtkPdf(code, acc.token, acc.partnerCode || '', acc.name || '', printOptions);
           token = acc.token;
           clientSource = acc.partnerCode || '';
           accountName = acc.name || '';
@@ -1422,7 +1439,7 @@ async function printGhtkLabels(input, source) {
       let fetchResult = preFetchedResult;
       if (!fetchResult) {
         try {
-          fetchResult = await fetchGhtkPdf(code, token, clientSource, accountName);
+          fetchResult = await fetchGhtkPdf(code, token, clientSource, accountName, printOptions);
         } catch (initialErr) {
           // Nếu gọi token ban đầu thất bại (ví dụ tài khoản bị lệch), tự động thử dò qua các tài khoản còn lại
           let fallbackSuccess = false;
@@ -1431,7 +1448,7 @@ async function printGhtkLabels(input, source) {
             for (const acc of syncedGhtkAccounts) {
               if (!acc.token || acc.token === token) continue;
               try {
-                fetchResult = await fetchGhtkPdf(code, acc.token, acc.partnerCode || '', acc.name || '');
+                fetchResult = await fetchGhtkPdf(code, acc.token, acc.partnerCode || '', acc.name || '', printOptions);
                 accountName = acc.name || '';
                 fallbackSuccess = true;
                 console.log(`[GHTK] ✔ Dò fallback thành công mã ${code} sang tài khoản "${acc.name}"`);
