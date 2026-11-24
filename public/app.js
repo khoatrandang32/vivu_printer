@@ -1134,6 +1134,83 @@ function bindEvents() {
   if (padLeftEl) padLeftEl.addEventListener('change', saveReturnSlipSettings);
   if (padRightEl) padRightEl.addEventListener('change', saveReturnSlipSettings);
   loadReturnSlipSettings();
+  initLiveLogs();
+}
+
+function initLiveLogs() {
+  const container = document.getElementById('liveLogsContainer');
+  const countBadge = document.getElementById('logCounterBadge');
+  const autoScrollChk = document.getElementById('chkLogAutoScroll');
+  const btnClear = document.getElementById('btnClearLiveLogs');
+
+  if (btnClear) {
+    btnClear.addEventListener('click', async () => {
+      try {
+        await fetch('/api/logs/clear', { method: 'POST' });
+        if (container) container.innerHTML = '<div style="color: #64748b; font-style: italic;">Đã xóa nhật ký.</div>';
+        if (countBadge) countBadge.textContent = '0 log';
+      } catch {}
+    });
+  }
+
+  let lastLogCount = -1;
+
+  async function fetchLiveLogs() {
+    try {
+      const res = await fetch('/api/logs');
+      const data = await res.json();
+      if (!data || !Array.isArray(data.logs)) return;
+
+      if (data.logs.length === lastLogCount) return;
+      lastLogCount = data.logs.length;
+
+      if (countBadge) countBadge.textContent = `${data.logs.length} dòng`;
+
+      if (!container) return;
+      if (data.logs.length === 0) {
+        container.innerHTML = '<div style="color: #64748b; font-style: italic;">Chưa có nhật ký hoạt động nào.</div>';
+        return;
+      }
+
+      const html = data.logs.map(log => {
+        let color = '#cbd5e1';
+        let prefixBadge = '';
+        if (log.level === 'error') {
+          color = '#f87171';
+          prefixBadge = '<span style="color:#ef4444; font-weight:bold;">[LỖI]</span> ';
+        } else if (log.level === 'warn') {
+          color = '#fbbf24';
+          prefixBadge = '<span style="color:#f59e0b; font-weight:bold;">[CẢNH BÁO]</span> ';
+        }
+
+        let formattedText = escapeHtml(log.text);
+        formattedText = formattedText
+          .replace(/\[SOCKET\]/g, '<span style="color:#38bdf8; font-weight:600;">[SOCKET]</span>')
+          .replace(/\[GHTK\]/g, '<span style="color:#4ade80; font-weight:600;">[GHTK]</span>')
+          .replace(/\[PDF\]/g, '<span style="color:#c084fc; font-weight:600;">[PDF]</span>')
+          .replace(/\[VTP\]/g, '<span style="color:#f472b6; font-weight:600;">[VTP]</span>')
+          .replace(/\[RTX\]/g, '<span style="color:#fb923c; font-weight:600;">[RTX]</span>');
+
+        return `<div style="color:${color};"><span style="color:#64748b; margin-right:6px;">[${log.time}]</span>${prefixBadge}${formattedText}</div>`;
+      }).join('');
+
+      container.innerHTML = html;
+
+      if (autoScrollChk && autoScrollChk.checked) {
+        container.scrollTop = container.scrollHeight;
+      }
+    } catch {}
+  }
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  fetchLiveLogs();
+  setInterval(fetchLiveLogs, 1500);
 }
 
 bindEvents();

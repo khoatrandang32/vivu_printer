@@ -5,6 +5,46 @@ if (process.env.BASE_NODE_MODULES && !module.paths.includes(process.env.BASE_NOD
   module.paths.push(process.env.BASE_NODE_MODULES);
 }
 
+// ── Live Logs Buffer (bộ đệm nhật ký trực tiếp trên giao diện) ────────────────
+const MAX_MEMORY_LOGS = 300;
+const memoryLogs = [];
+
+function addMemoryLog(level, args) {
+  const time = new Date().toLocaleTimeString('vi-VN', { hour12: false });
+  const text = args.map(arg => {
+    if (typeof arg === 'object' && arg !== null) {
+      try {
+        return JSON.stringify(arg);
+      } catch {
+        return String(arg);
+      }
+    }
+    return String(arg);
+  }).join(' ');
+
+  memoryLogs.push({ time, level, text });
+  if (memoryLogs.length > MAX_MEMORY_LOGS) {
+    memoryLogs.shift();
+  }
+}
+
+const origConsoleLog = console.log;
+const origConsoleWarn = console.warn;
+const origConsoleError = console.error;
+
+console.log = function (...args) {
+  origConsoleLog.apply(console, args);
+  addMemoryLog('info', args);
+};
+console.warn = function (...args) {
+  origConsoleWarn.apply(console, args);
+  addMemoryLog('warn', args);
+};
+console.error = function (...args) {
+  origConsoleError.apply(console, args);
+  addMemoryLog('error', args);
+};
+
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -1985,6 +2025,16 @@ app.post('/api/update/install', (req, res) => {
   } else {
     res.json({ status: 'standalone', message: 'Server đang chạy độc lập không qua Electron' });
   }
+});
+
+// Live logs endpoints
+app.get('/api/logs', (req, res) => {
+  res.json({ success: true, logs: memoryLogs });
+});
+
+app.post('/api/logs/clear', (req, res) => {
+  memoryLogs.length = 0;
+  res.json({ success: true, message: 'Đã xóa log' });
 });
 
 // Print test endpoint
