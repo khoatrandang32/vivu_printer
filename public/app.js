@@ -640,11 +640,8 @@ function bindEvents() {
       if (document.getElementById('cfgSocketUrl')) document.getElementById('cfgSocketUrl').value = cfg.backendSocketUrl || '';
       if (document.getElementById('cfgSocketDeviceId')) document.getElementById('cfgSocketDeviceId').value = cfg.backendSocketDeviceId || '';
       if (document.getElementById('cfgSocketToken')) document.getElementById('cfgSocketToken').value = cfg.backendSocketToken || '';
-      if (document.getElementById('cfgGhtkToken')) document.getElementById('cfgGhtkToken').value = cfg.ghtkApiToken || '';
-      if (document.getElementById('cfgGhtkSource')) document.getElementById('cfgGhtkSource').value = cfg.ghtkClientSource || '';
-      if (document.getElementById('cfgCurrentVersion')) document.getElementById('cfgCurrentVersion').textContent = cfg.version || '1.0.1';
-      if (document.getElementById('appVersionBadge')) document.getElementById('appVersionBadge').textContent = 'v' + (cfg.version || '1.0.1');
-
+      if (document.getElementById('cfgCurrentVersion')) document.getElementById('cfgCurrentVersion').textContent = cfg.version || '1.0.3';
+      if (document.getElementById('appVersionBadge')) document.getElementById('appVersionBadge').textContent = 'v' + (cfg.version || '1.0.3');
       const accounts = Array.isArray(cfg.ghtkAccounts) ? cfg.ghtkAccounts : [];
       const accountsInfoEl = document.getElementById('cfgGhtkAccountsInfo');
       if (accountsInfoEl) {
@@ -656,10 +653,10 @@ function bindEvents() {
           accountsInfoEl.innerHTML = `<strong>✔ Đa tài khoản:</strong> Đã đồng bộ <strong>${accounts.length}</strong> tài khoản GHTK từ server (${accounts.map(a => a.name).join(', ')}). Hệ thống tự động chọn đúng tài khoản khi in.`;
         } else {
           accountsInfoEl.style.display = 'block';
-          accountsInfoEl.style.color = '#b45309';
-          accountsInfoEl.style.background = '#fef3c7';
-          accountsInfoEl.style.borderColor = '#fde68a';
-          accountsInfoEl.innerHTML = `<em>Chưa có tài khoản GHTK nào được đồng bộ từ Backend. Kết nối socket với server để tự động đồng bộ danh sách tài khoản.</em>`;
+          accountsInfoEl.style.color = '#3b82f6';
+          accountsInfoEl.style.background = '#eff6ff';
+          accountsInfoEl.style.borderColor = '#bfdbfe';
+          accountsInfoEl.innerHTML = `<strong>ℹ Đa tài khoản GHTK:</strong> Sẽ tự động đồng bộ từ Backend khi máy in kết nối Socket. Không cần nhập token thủ công.`;
         }
       }
 
@@ -690,9 +687,7 @@ function bindEvents() {
       pdfViewerPath: document.getElementById('cfgPdfViewerPath')?.value.trim() || '',
       backendSocketUrl: document.getElementById('cfgSocketUrl')?.value.trim() || '',
       backendSocketDeviceId: document.getElementById('cfgSocketDeviceId')?.value.trim() || '',
-      backendSocketToken: document.getElementById('cfgSocketToken')?.value.trim() || '',
-      ghtkApiToken: document.getElementById('cfgGhtkToken')?.value.trim() || '',
-      ghtkClientSource: document.getElementById('cfgGhtkSource')?.value.trim() || ''
+      backendSocketToken: document.getElementById('cfgSocketToken')?.value.trim() || ''
     };
 
     try {
