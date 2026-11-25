@@ -172,7 +172,7 @@ app.post('/settings/env', express.json(), (req, res) => {
   }
 });
 
- // Preview return-to-workshop slip HTML with preview options (font scaling + per-element sizes)
+// Preview return-to-workshop slip HTML with preview options (font scaling + per-element sizes)
 app.post('/settings/preview-return-slip', express.json(), async (req, res) => {
   try {
     const slip = req.body && req.body.slip ? req.body.slip : {};
@@ -222,7 +222,7 @@ app.post('/settings/preview-return-slip', express.json(), async (req, res) => {
   }
 });
 
- // Preview other-carrier ship label HTML with preview options (font scaling + per-element sizes)
+// Preview other-carrier ship label HTML with preview options (font scaling + per-element sizes)
 app.post('/settings/preview-other-carrier-ship', express.json(), async (req, res) => {
   try {
     const shipLabel = req.body && req.body.shipLabel ? req.body.shipLabel : {};
@@ -299,7 +299,7 @@ function createTempPdfFile(buffer) {
 
 function scheduleTempDelete(filePath, delayMs = 120000) {
   setTimeout(() => {
-    fs.unlink(filePath, () => {});
+    fs.unlink(filePath, () => { });
   }, delayMs);
 }
 
@@ -770,7 +770,7 @@ function connectSocketIo() {
       syncedGhtkAccounts = payload.accounts;
       try {
         configManager.save({ ghtkAccounts: syncedGhtkAccounts });
-      } catch (_) {}
+      } catch (_) { }
       const names = syncedGhtkAccounts.map((a) => a.name).join(', ');
       console.log(`[SOCKET][GHTK] Đã đồng bộ ${syncedGhtkAccounts.length} tài khoản GHTK từ server: ${names || '(trống)'}`);
     }
@@ -787,7 +787,7 @@ function reconnectSocketIo() {
     try {
       socketClient.disconnect();
       socketClient.removeAllListeners();
-    } catch {}
+    } catch { }
     socketClient = null;
   }
   startSocketClient();
@@ -807,7 +807,7 @@ function startUdpBroadcast() {
   if (!currentCfg.discoveryEnable) return;
   const sock = dgram.createSocket('udp4');
   sock.bind(0, '0.0.0.0', () => {
-    try { sock.setBroadcast(true); } catch {}
+    try { sock.setBroadcast(true); } catch { }
     setInterval(() => {
       const cfg = configManager.get();
       if (!cfg.discoveryEnable) return;
@@ -819,7 +819,7 @@ function startUdpBroadcast() {
         ts: Date.now()
       };
       const buf = Buffer.from(JSON.stringify(payload));
-      try { sock.send(buf, 0, buf.length, cfg.discoveryPort || 4210, cfg.discoveryAddr || '255.255.255.255'); } catch {}
+      try { sock.send(buf, 0, buf.length, cfg.discoveryPort || 4210, cfg.discoveryAddr || '255.255.255.255'); } catch { }
     }, Math.max(500, currentCfg.discoveryIntervalMs || 2000));
   });
 }
@@ -845,7 +845,7 @@ async function detectPrinters() {
         status: null,
       }));
     }
-  } catch {}
+  } catch { }
   try {
     const psCmd2 = `powershell -NoProfile -Command "[Console]::OutputEncoding = [Text.UTF8Encoding]::UTF8; Get-CimInstance Win32_Printer | Select-Object Name, Default, WorkOffline, PrinterStatus, Shared, ShareName | ConvertTo-Json"`;
     const { stdout } = await tryExec(psCmd2);
@@ -866,7 +866,7 @@ async function detectPrinters() {
         shareName: p.ShareName || null,
       }));
     }
-  } catch {}
+  } catch { }
   try {
     const { stdout } = await tryExec('wmic printer get Name,Default,WorkOffline /format:list');
     const lines = stdout.split(/\r?\n/);
@@ -906,7 +906,7 @@ async function detectPrinters() {
       });
     }
     return printers;
-  } catch {}
+  } catch { }
   return [];
 }
 
@@ -1042,7 +1042,7 @@ async function sendToPrinterRaw(tspl, printerName) {
       }
     }
   } finally {
-    fs.unlink(filePath, () => {});
+    fs.unlink(filePath, () => { });
   }
 }
 
@@ -1361,7 +1361,7 @@ function queryBackendForGhtkPrintInfo(trackingCode) {
                 return resolve(parsed.data);
               }
             }
-          } catch (_) {}
+          } catch (_) { }
           resolve(null);
         });
       }
@@ -1453,7 +1453,7 @@ async function printGhtkLabels(input, source) {
                 fallbackSuccess = true;
                 console.log(`[GHTK] ✔ Dò fallback thành công mã ${code} sang tài khoản "${acc.name}"`);
                 break;
-              } catch (_) {}
+              } catch (_) { }
             }
           }
           if (!fallbackSuccess) throw initialErr;
@@ -1481,26 +1481,26 @@ async function printGhtkLabels(input, source) {
 function findHeadlessBrowser() {
   const candidates = process.platform === 'win32'
     ? [
-        // Microsoft Edge (thường có sẵn trên Windows 10/11)
-        'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-        'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-        // Google Chrome
-        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-        // Chromium
-        'C:\\Program Files\\Chromium\\Application\\chrome.exe',
-      ]
+      // Microsoft Edge (thường có sẵn trên Windows 10/11)
+      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+      'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+      // Google Chrome
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+      // Chromium
+      'C:\\Program Files\\Chromium\\Application\\chrome.exe',
+    ]
     : [
-        // macOS
-        '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-        '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
-        '/Applications/Chromium.app/Contents/MacOS/Chromium',
-        '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
-        // Linux
-        '/usr/bin/google-chrome',
-        '/usr/bin/chromium',
-        '/usr/bin/chromium-browser',
-      ];
+      // macOS
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+      '/Applications/Chromium.app/Contents/MacOS/Chromium',
+      '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+      // Linux
+      '/usr/bin/google-chrome',
+      '/usr/bin/chromium',
+      '/usr/bin/chromium-browser',
+    ];
   // Ưu tiên biến môi trường nếu có
   const envBrowser = String(process.env.HEADLESS_BROWSER_PATH || '').trim();
   if (envBrowser) candidates.unshift(envBrowser);
@@ -1659,7 +1659,7 @@ async function renderUrlToPdf(url) {
     console.log(`[VTP] PDF tạo thành công: ${pdfPath} (${stat.size} bytes)`);
     return pdfPath;
   } finally {
-    await browser.close().catch(() => {});
+    await browser.close().catch(() => { });
   }
 }
 
@@ -1679,7 +1679,7 @@ async function printViettelPostUrls(urls, source) {
       const printResult = await sendToPrinterPdf(pdfPath, CURRENT_PRINTER, { keepFile: true });
       // Xóa PDF sau 60 giây để SumatraPDF kịp đọc và in xong
       setTimeout(() => {
-        try { fs.rmSync(path.dirname(pdfPath), { recursive: true, force: true }); } catch {}
+        try { fs.rmSync(path.dirname(pdfPath), { recursive: true, force: true }); } catch { }
       }, 60000);
       results.push({ url, status: 'success', result: printResult });
       console.log(`[VTP] In thành công URL: ${url}`);
@@ -1739,13 +1739,13 @@ async function renderVtpUrlToHtml(url) {
     try {
       const u = new URL(url);
       baseHref = u.origin + u.pathname.substring(0, u.pathname.lastIndexOf('/') + 1);
-    } catch {}
+    } catch { }
     if (baseHref) {
       html = html.replace(/<head([^>]*)>/i, `<head$1>\n<base href="${baseHref}">`);
     }
     return html;
   } finally {
-    await browser.close().catch(() => {});
+    await browser.close().catch(() => { });
   }
 }
 
@@ -1933,7 +1933,7 @@ app.get('/api/config', (req, res) => {
   let appVersion = '1.0.1';
   try {
     appVersion = require('./package.json').version;
-  } catch {}
+  } catch { }
   res.json({
     ...cfg,
     port: cfg.port || PORT,
@@ -2191,7 +2191,7 @@ async function installStartupShortcut() {
 async function uninstallStartupShortcut() {
   const lnk = getShortcutPath();
   if (fs.existsSync(lnk)) {
-    try { fs.unlinkSync(lnk); } catch {}
+    try { fs.unlinkSync(lnk); } catch { }
     return { stdout: '', stderr: '' };
   }
   return { stdout: '', stderr: '' };
@@ -2230,9 +2230,9 @@ app.post('/startup/install', async (req, res) => {
 
 app.post('/startup/uninstall', async (req, res) => {
   try {
-    try { await uninstallStartupTask(); } catch {}
-    try { await uninstallStartupRegistry(); } catch {}
-    try { await uninstallStartupShortcut(); } catch {}
+    try { await uninstallStartupTask(); } catch { }
+    try { await uninstallStartupRegistry(); } catch { }
+    try { await uninstallStartupShortcut(); } catch { }
     res.json({ status: 'success', name: STARTUP_TASK_NAME });
   } catch (e) {
     res.status(500).json({ status: 'error', message: e.message });
@@ -2263,7 +2263,7 @@ const server = app.listen(PORT, () => {
         }
       }
     })
-    .catch(() => {});
+    .catch(() => { });
   startUdpBroadcast();
   startMdns(configManager.get());
   startSocketClient();

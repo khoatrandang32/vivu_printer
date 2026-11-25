@@ -66,7 +66,6 @@ async function stampGhtkLabelPdf(pdfBuffer, accountName) {
     const pageHeight = firstPage.getHeight();
 
     let font;
-    let tagText = 'TÀI KHOẢN GHTK';
     let mainText = cleanAccountName.toUpperCase();
 
     const fontBytes = loadUnicodeFontBytes();
@@ -82,21 +81,16 @@ async function stampGhtkLabelPdf(pdfBuffer, accountName) {
     if (!font) {
       // Fallback: font chuẩn Helvetica không hỗ trợ dấu tiếng Việt, cần khử dấu
       font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-      tagText = 'TAI KHOAN GHTK';
       mainText = removeVietnameseDiacritics(mainText);
     }
 
-    const fontSizeTag = 7;
     const fontSizeMain = 10.5;
-
-    const widthTag = font.widthOfTextAtSize(tagText, fontSizeTag);
-    const widthMain = font.widthOfTextAtSize(mainText, fontSizeMain);
-    const textWidth = Math.max(widthTag, widthMain);
+    const textWidth = font.widthOfTextAtSize(mainText, fontSizeMain);
 
     const boxPaddingX = 8;
     const boxPaddingY = 4;
     const boxWidth = textWidth + boxPaddingX * 2;
-    const boxHeight = fontSizeTag + fontSizeMain + 8;
+    const boxHeight = fontSizeMain + boxPaddingY * 2;
 
     // Vị trí: Góc trên cùng bên phải của tem
     const marginRight = 10;
@@ -115,19 +109,10 @@ async function stampGhtkLabelPdf(pdfBuffer, accountName) {
       borderWidth: 1.5,
     });
 
-    // Vẽ nhãn phụ "TÀI KHOẢN GHTK"
-    firstPage.drawText(tagText, {
-      x: boxX + (boxWidth - widthTag) / 2,
-      y: boxY + boxHeight - fontSizeTag - 3,
-      size: fontSizeTag,
-      font,
-      color: rgb(0.25, 0.3, 0.35),
-    });
-
-    // Vẽ tên tài khoản
+    // Vẽ tên tài khoản (căn giữa khung)
     firstPage.drawText(mainText, {
-      x: boxX + (boxWidth - widthMain) / 2,
-      y: boxY + 4,
+      x: boxX + (boxWidth - textWidth) / 2,
+      y: boxY + (boxHeight - 0.72 * fontSizeMain) / 2,
       size: fontSizeMain,
       font,
       color: rgb(0, 0, 0),
